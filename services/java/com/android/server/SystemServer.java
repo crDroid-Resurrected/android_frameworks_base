@@ -60,6 +60,7 @@ import com.android.internal.os.SamplingProfilerIntegration;
 import com.android.internal.os.ZygoteInit;
 import com.android.internal.policy.EmergencyAffordanceManager;
 import com.android.internal.widget.ILockSettings;
+import com.android.server.ThemeService;
 import com.android.server.accessibility.AccessibilityManagerService;
 import com.android.server.am.ActivityManagerService;
 import com.android.server.audio.AudioService;
@@ -74,6 +75,7 @@ import com.android.server.dreams.DreamManagerService;
 import com.android.server.emergency.EmergencyAffordanceService;
 import com.android.server.fingerprint.FingerprintService;
 import com.android.server.hdmi.HdmiControlService;
+import com.android.server.gesture.EdgeGestureService;
 import com.android.server.gesture.GestureService;
 import com.android.server.input.InputManagerService;
 import com.android.server.job.JobSchedulerService;
@@ -86,7 +88,10 @@ import com.android.server.net.NetworkPolicyManagerService;
 import com.android.server.net.NetworkStatsService;
 import com.android.server.notification.NotificationManagerService;
 import com.android.server.os.RegionalizationService;
+import com.android.server.om.OverlayManagerService;
 import com.android.server.os.SchedulingPolicyService;
+import com.android.server.pocket.PocketService;
+import com.android.server.pocket.PocketBridgeService;
 import com.android.server.pm.BackgroundDexOptService;
 import com.android.server.pm.Installer;
 import com.android.server.pm.LauncherAppsService;
@@ -267,6 +272,15 @@ public final class SystemServer {
             if (System.currentTimeMillis() < EARLIEST_SUPPORTED_TIME) {
                 Slog.w(TAG, "System clock is before 1970; setting to 1970.");
                 SystemClock.setCurrentTimeMillis(EARLIEST_SUPPORTED_TIME);
+            }
+
+            //
+            // Default the timezone property to GMT if not set.
+            //
+            String timezoneProperty =  SystemProperties.get("persist.sys.timezone");
+            if (timezoneProperty == null || timezoneProperty.isEmpty()) {
+                Slog.w(TAG, "Timezone not set; setting to GMT.");
+                SystemProperties.set("persist.sys.timezone", "GMT");
             }
 
             // If the system has "persist.sys.language" and friends set, replace them with
@@ -537,6 +551,9 @@ public final class SystemServer {
         // Set up the Application instance for the system process and get started.
         mActivityManagerService.setSystemProcess();
 
+        // Manages Overlay packages
+        mSystemServiceManager.startService(new OverlayManagerService(mSystemContext, installer));
+
         // The sensor service needs access to package manager service, app ops
         // service, and permissions service, therefore we start it after them.
         startSensorService();
@@ -583,6 +600,7 @@ public final class SystemServer {
         HardwarePropertiesManagerService hardwarePropertiesService = null;
         Object wigigP2pService = null;
         Object wigigService = null;
+        ThemeService themeService = null;
 
         boolean disableStorage = SystemProperties.getBoolean("config.disable_storage", false);
         boolean disableBluetooth = SystemProperties.getBoolean("config.disable_bluetooth", false);
@@ -652,6 +670,11 @@ public final class SystemServer {
 
             traceBeginAndSlog("InstallSystemProviders");
             mActivityManagerService.installSystemProviders();
+            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+
+            traceBeginAndSlog("ThemeService");
+            themeService = new ThemeService(context);
+            ServiceManager.addService(Context.THEME_SERVICE, themeService);
             Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
 
             traceBeginAndSlog("StartVibratorService");
@@ -740,6 +763,7 @@ public final class SystemServer {
         ILockSettings lockSettings = null;
         AssetAtlasService atlas = null;
         MediaRouterService mediaRouter = null;
+        EdgeGestureService edgeGestureService = null;
         GestureService gestureService = null;
 
         // Bring up services needed for UI.
@@ -1270,6 +1294,22 @@ public final class SystemServer {
             mSystemServiceManager.startService(ShortcutService.Lifecycle.class);
 
             mSystemServiceManager.startService(LauncherAppsService.class);
+
+            try {
+                Slog.i(TAG, "EdgeGesture service");
+                edgeGestureService = new EdgeGestureService(context, inputManager);
+                ServiceManager.addService("edgegestureservice", edgeGestureService);
+            } catch (Throwable e) {
+                Slog.e(TAG, "Failure starting EdgeGesture service", e);
+            }
+
+            Slog.i(TAG, "Starting PocketService");
+            mSystemServiceManager.startService(PocketService.class);
+            if (!context.getResources().getString(
+                    com.android.internal.R.string.config_pocketBridgeSysfsInpocket).isEmpty()) {
+                Slog.i(TAG, "Starting PocketBridgeService");
+                mSystemServiceManager.startService(PocketBridgeService.class);
+            }
         }
 
         if (!disableNonCoreServices && !disableMediaProjection) {
@@ -1392,6 +1432,12 @@ public final class SystemServer {
             mActivityManagerService.showSafeModeOverlay();
         }
 
+        // Let's check whether we should disable all theme overlays
+        final boolean disableOverlays = wm.detectDisableOverlays();
+        if (disableOverlays) {
+            mActivityManagerService.disableOverlays();
+        }
+
         // Update the configuration for this context by hand, because we're going
         // to start using it before the config change done in wm.systemReady() will
         // propagate to it.
@@ -1433,6 +1479,14 @@ public final class SystemServer {
             reportWtf("making Display Manager Service ready", e);
         }
         Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+
+        if (edgeGestureService != null) {
+            try {
+                edgeGestureService.systemReady();
+            } catch (Throwable e) {
+                reportWtf("making EdgeGesture service ready", e);
+            }
+        }
 
         if (gestureService != null) {
             try {

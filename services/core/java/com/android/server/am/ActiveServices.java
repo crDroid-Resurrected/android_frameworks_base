@@ -119,6 +119,8 @@ public final class ActiveServices {
     // allowing the next pending start to run.
     static final int BG_START_TIMEOUT = 15*1000;
 
+    static final int MAX_SERVICE_COUNT = 10000;
+
     final ActivityManagerService mAm;
 
     // Maximum number of services that we allow to start in the background
@@ -341,7 +343,7 @@ public final class ActiveServices {
 
         ServiceRecord r = res.record;
 
-        if (!mAm.mUserController.exists(r.userId)) {
+        if (!mAm.mUserController.isUserRunningLocked(r.userId, 0)) {
             Slog.w(TAG, "Trying to start service with non-existent user! " + r.userId);
             return null;
         }
@@ -377,6 +379,12 @@ public final class ActiveServices {
                     callingUid, service, callerFg, userId)) {
                 return null;
             }
+        }
+
+        if (r.deliveredStarts.size() + r.pendingStarts.size() >= MAX_SERVICE_COUNT) {
+            Slog.e(TAG_SERVICE, r + " has already start " + MAX_SERVICE_COUNT
+                    + " services. Not allow to start more.");
+            return null;
         }
 
         if (unscheduleServiceRestartLocked(r, callingUid, false)) {
@@ -997,6 +1005,14 @@ public final class ActiveServices {
         }
 
         final long origId = Binder.clearCallingIdentity();
+
+        IBinder ibinder = connection.asBinder();
+        ArrayList<ConnectionRecord> list = s.connections.get(ibinder);
+        if (list != null && list.size() >= MAX_SERVICE_COUNT) {
+            Slog.e(TAG_SERVICE, s + " has already bind " + MAX_SERVICE_COUNT
+                    + " connections. Not allow to bind more.");
+            return 0;
+        }
 
         try {
             if (unscheduleServiceRestartLocked(s, callerApp.info.uid, false)) {
@@ -1732,7 +1748,7 @@ public final class ActiveServices {
             return null;
         }
 
-        if (!whileRestarting && r.restartDelay > 0) {
+        if (!whileRestarting && r.restartDelay > 0 && mRestartingServices.contains(r)) {
             // If waiting for a restart, then do nothing.
             return null;
         }
@@ -1809,7 +1825,7 @@ public final class ActiveServices {
 
         // Not running -- get it started, and enqueue this service record
         // to be executed when the app comes up.
-        if (app == null && !permissionsReviewRequired) {
+        if ((app == null || app.thread == null) && !permissionsReviewRequired) {
             if ((app=mAm.startProcessLocked(procName, r.appInfo, true, intentFlags,
                     "service", r.name, false, isolated, false)) == null) {
                 String msg = "Unable to launch app "
@@ -2343,6 +2359,7 @@ public final class ActiveServices {
             }
             final long origId = Binder.clearCallingIdentity();
             serviceDoneExecutingLocked(r, inDestroying, inDestroying);
+            getServiceMap(r.userId).ensureNotStartingBackground(r);
             Binder.restoreCallingIdentity(origId);
         } else {
             Slog.w(TAG, "Done executing unknown service from pid "
@@ -2756,6 +2773,7 @@ public final class ActiveServices {
                 if (r.processName.equals(app.processName) &&
                         r.serviceInfo.applicationInfo.uid == app.info.uid) {
                     mRestartingServices.remove(i);
+                    r.resetRestartCounter();
                     clearRestartingIfNeededLocked(r);
                 }
             }
@@ -2825,17 +2843,28 @@ public final class ActiveServices {
         return info;
     }
 
+    static boolean checkIntractAcrossUsersFullPermission() {
+        final int uid = Binder.getCallingUid();
+        return ActivityManager.checkUidPermission(
+                    android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                    uid) == PackageManager.PERMISSION_GRANTED;
+    }
+
     List<ActivityManager.RunningServiceInfo> getRunningServiceInfoLocked(int maxNum,
             int flags) {
+        boolean granted = checkIntractAcrossUsersFullPermission();
+        return getRunningServiceInfoLocked(maxNum, flags, granted);
+    }
+
+    List<ActivityManager.RunningServiceInfo> getRunningServiceInfoLocked(int maxNum,
+            int flags, boolean granted) {
         ArrayList<ActivityManager.RunningServiceInfo> res
                 = new ArrayList<ActivityManager.RunningServiceInfo>();
 
         final int uid = Binder.getCallingUid();
         final long ident = Binder.clearCallingIdentity();
         try {
-            if (ActivityManager.checkUidPermission(
-                    android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
-                    uid) == PackageManager.PERMISSION_GRANTED) {
+            if (granted) {
                 int[] users = mAm.mUserController.getUsers();
                 for (int ui=0; ui<users.length && res.size() < maxNum; ui++) {
                     ArrayMap<ComponentName, ServiceRecord> alls = getServices(users[ui]);

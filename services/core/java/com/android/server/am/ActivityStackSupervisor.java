@@ -1397,7 +1397,12 @@ public final class ActivityStackSupervisor implements DisplayListener {
         ProcessRecord app = mService.getProcessRecordLocked(r.processName,
                 r.info.applicationInfo.uid, true);
 
-        r.task.stack.setLaunchTime(r);
+        if (r.task != null && r.task.stack != null) {
+            r.task.stack.setLaunchTime(r);
+        } else {
+            Slog.w(TAG, "Stack or task of activity:" + r
+                    + " is null, will not setLaunchTime for it.");
+        }
 
         if (app != null && app.thread != null) {
             try {
@@ -2149,20 +2154,6 @@ public final class ActivityStackSupervisor implements DisplayListener {
         mWindowManager.deferSurfaceLayout();
         try {
             if (fromStackId == DOCKED_STACK_ID) {
-
-                // We are moving all tasks from the docked stack to the fullscreen stack,
-                // which is dismissing the docked stack, so resize all other stacks to
-                // fullscreen here already so we don't end up with resize trashing.
-                for (int i = FIRST_STATIC_STACK_ID; i <= LAST_STATIC_STACK_ID; i++) {
-                    if (StackId.isResizeableByDockedStack(i)) {
-                        ActivityStack otherStack = getStack(i);
-                        if (otherStack != null) {
-                            resizeStackLocked(i, null, null, null, PRESERVE_WINDOWS,
-                                    true /* allowResizeInDockedMode */, DEFER_RESUME);
-                        }
-                    }
-                }
-
                 // Also disable docked stack resizing since we have manually adjusted the
                 // size of other stacks above and we don't want to trigger a docked stack
                 // resize when we remove task from it below and it is detached from the
@@ -2184,6 +2175,20 @@ public final class ActivityStackSupervisor implements DisplayListener {
                 for (int i = size - 1; i >= 0; i--) {
                     positionTaskInStackLocked(tasks.get(i).taskId,
                             FULLSCREEN_WORKSPACE_STACK_ID, 0);
+                }
+            }
+            // We are moving all tasks from the docked stack to the fullscreen stack,
+            // which is dismissing the docked stack, so resize all other stacks to
+            // fullscreen here already so we don't end up with resize trashing.
+            if (fromStackId == DOCKED_STACK_ID)  {
+                for (int i = FIRST_STATIC_STACK_ID; i <= LAST_STATIC_STACK_ID; i++) {
+                    if (StackId.isResizeableByDockedStack(i)) {
+                        ActivityStack otherStack = getStack(i);
+                        if (otherStack != null) {
+                            resizeStackLocked(i, null/* fullscreen */, null, null, PRESERVE_WINDOWS,
+                                    true /* allowResizeInDockedMode */, !DEFER_RESUME);
+                        }
+                    }
                 }
             }
         } finally {
@@ -2757,6 +2762,9 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
         }
         checkReadyForSleepLocked();
+        if (mGoingToSleep.isHeld()) {
+            mGoingToSleep.release();
+        }
     }
 
     boolean shutdownLocked(int timeout) {
@@ -2866,9 +2874,6 @@ public final class ActivityStackSupervisor implements DisplayListener {
 
         removeSleepTimeouts();
 
-        if (mGoingToSleep.isHeld()) {
-            mGoingToSleep.release();
-        }
         if (mService.mShuttingDown) {
             mService.notifyAll();
         }
@@ -3140,7 +3145,7 @@ public final class ActivityStackSupervisor implements DisplayListener {
     boolean okToShowLocked(ActivityRecord r) {
         return r != null && ((r.info.flags & FLAG_SHOW_FOR_ALL_USERS) != 0
                 || (isCurrentProfileLocked(r.userId)
-                && !mService.mUserController.isUserStoppingOrShuttingDownLocked(r.userId)));
+                && !mService.mUserController.isUserStoppingOrShuttingDownLockedOrUserNotExist(r.userId)));
     }
 
     final ArrayList<ActivityRecord> processStoppingActivitiesLocked(boolean remove) {
@@ -3961,6 +3966,7 @@ public final class ActivityStackSupervisor implements DisplayListener {
                             }
                             getStatusBarService().disable(flags, mToken,
                                     mService.mContext.getPackageName());
+                            getStatusBarService().screenPinningStateChanged(true);
                         }
                         mWindowManager.disableKeyguard(mToken, LOCK_TASK_TAG);
                         if (getDevicePolicyManager() != null) {
@@ -3977,6 +3983,7 @@ public final class ActivityStackSupervisor implements DisplayListener {
                         if (getStatusBarService() != null) {
                             getStatusBarService().disable(StatusBarManager.DISABLE_NONE, mToken,
                                     mService.mContext.getPackageName());
+                            getStatusBarService().screenPinningStateChanged(false);
                         }
                         mWindowManager.reenableKeyguard(mToken);
                         if (getDevicePolicyManager() != null) {
@@ -4599,5 +4606,21 @@ public final class ActivityStackSupervisor implements DisplayListener {
             }
         }
         return topActivityTokens;
+    }
+
+    void ensureTasksMinDimensionsLocked() {
+        for (int displayNdx = mActivityDisplays.size() - 1; displayNdx >= 0; --displayNdx) {
+            final ArrayList<ActivityStack> stacks = mActivityDisplays.valueAt(displayNdx).mStacks;
+            final int topStackNdx = stacks.size() - 1;
+            for (int stackNdx = topStackNdx; stackNdx >= 0; --stackNdx) {
+                final ArrayList<TaskRecord> tasks = stacks.get(stackNdx).getAllTasks();
+                for (int taskNdx = tasks.size() - 1; taskNdx >= 0; --taskNdx) {
+                    final TaskRecord task = tasks.get(taskNdx);
+                    if (task.getRootActivity() != null) {
+                        task.setMinDimensions(task.getRootActivity().info);
+                    }
+                }
+            }
+        }
     }
 }

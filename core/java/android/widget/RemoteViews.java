@@ -393,6 +393,30 @@ public class RemoteViews implements Parcelable, Filter {
         recalculateMemoryUsage();
     }
 
+    private static class RemoteViewsContextWrapper extends ContextWrapper {
+        private final Context mContextForResources;
+
+        RemoteViewsContextWrapper(Context context, Context contextForResources) {
+            super(context);
+            mContextForResources = contextForResources;
+        }
+
+        @Override
+        public Resources getResources() {
+            return mContextForResources.getResources();
+        }
+
+        @Override
+        public Resources.Theme getTheme() {
+            return mContextForResources.getTheme();
+        }
+
+        @Override
+        public String getPackageName() {
+            return mContextForResources.getPackageName();
+        }
+    }
+
     private class SetEmptyView extends Action {
         int viewId;
         int emptyViewId;
@@ -2602,6 +2626,27 @@ public class RemoteViews implements Parcelable, Filter {
     }
 
     /**
+     * Equivalent to calling {@link Chronometer#setBaseNoDelay Chronometer.setBaseNoDelay},
+     * {@link Chronometer#setFormat Chronometer.setFormat},
+     * and {@link Chronometer#start Chronometer.start()} or
+     * {@link Chronometer#stop Chronometer.stop()}.
+     *
+     * @param viewId The id of the {@link Chronometer} to change
+     * @param base include two time: DeskClockSysTime and DeskClockTime respectively.
+     * @param format The Chronometer format string, or null to
+     *               simply display the timer value.
+     * @param started True if you want the clock to be started, false if not.
+     *
+     * @see #setChronometerCountDown(int, boolean)
+     * @hide
+     */
+    public void setChronometerNoDelay(int viewId, String base, String format, boolean started) {
+        setString(viewId, "setBaseNoDelay", base);
+        setString(viewId, "setFormat", format);
+        setBoolean(viewId, "setStarted", started);
+    }
+
+    /**
      * Equivalent to calling {@link Chronometer#setCountDown(boolean) Chronometer.setCountDown} on
      * the chronometer with the given viewId.
      *
@@ -3168,20 +3213,7 @@ public class RemoteViews implements Parcelable, Filter {
         // still returns the current users userId so settings like data / time formats
         // are loaded without requiring cross user persmissions.
         final Context contextForResources = getContextForResources(context);
-        Context inflationContext = new ContextWrapper(context) {
-            @Override
-            public Resources getResources() {
-                return contextForResources.getResources();
-            }
-            @Override
-            public Resources.Theme getTheme() {
-                return contextForResources.getTheme();
-            }
-            @Override
-            public String getPackageName() {
-                return contextForResources.getPackageName();
-            }
-        };
+        Context inflationContext = new RemoteViewsContextWrapper(context, contextForResources);
 
         LayoutInflater inflater = (LayoutInflater)
                 context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);

@@ -18,6 +18,7 @@ package com.android.systemui.statusbar.phone;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.graphics.drawable.BitmapDrawable;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.app.ActivityManager;
@@ -25,26 +26,33 @@ import android.app.StatusBarManager;
 import android.content.Context;
 import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
+import android.graphics.*;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.os.AsyncTask;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.EventLog;
 import android.util.MathUtils;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.animation.*;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
-import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardStatusView;
+import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.AutoReinflateContainer;
 import com.android.systemui.AutoReinflateContainer.InflateListener;
 import com.android.systemui.DejankUtils;
@@ -54,6 +62,7 @@ import com.android.systemui.Interpolators;
 import com.android.systemui.R;
 import com.android.systemui.classifier.FalsingManager;
 import com.android.systemui.qs.QSContainer;
+import com.android.systemui.statusbar.*;
 import com.android.systemui.statusbar.ExpandableNotificationRow;
 import com.android.systemui.statusbar.ExpandableView;
 import com.android.systemui.statusbar.FlingAnimationUtils;
@@ -103,6 +112,38 @@ public class NotificationPanelView extends PanelView implements
             "cmsecure:" + CMSettings.Secure.LOCK_SCREEN_WEATHER_ENABLED;
     private static final String DOUBLE_TAP_SLEEP_ANYWHERE =
             "cmsecure:" + CMSettings.Secure.DOUBLE_TAP_SLEEP_ANYWHERE;
+    private static final String QS_TRANSPARENT_SHADE =
+            "system:" + Settings.System.QS_TRANSPARENT_SHADE;
+    private static final String QS_STROKE =
+            "system:" + Settings.System.QS_STROKE;
+    private static final String QS_STROKE_COLOR =
+            "system:" + Settings.System.QS_STROKE_COLOR;
+    private static final String QS_STROKE_THICKNESS =
+            "system:" + Settings.System.QS_STROKE_THICKNESS;
+    private static final String QS_CORNER_RADIUS =
+            "system:" + Settings.System.QS_CORNER_RADIUS;
+    private static final String QS_STROKE_DASH_WIDTH =
+            "system:" + Settings.System.QS_STROKE_DASH_WIDTH;
+    private static final String QS_STROKE_DASH_GAP =
+            "system:" + Settings.System.QS_STROKE_DASH_GAP;
+    private static final String BLUR_SCALE_PREFERENCE_KEY =
+            "system:" + Settings.System.BLUR_SCALE_PREFERENCE_KEY;
+    private static final String BLUR_RADIUS_PREFERENCE_KEY =
+            "system:" + Settings.System.BLUR_RADIUS_PREFERENCE_KEY;
+    private static final String TRANSLUCENT_QUICK_SETTINGS_PREFERENCE_KEY =
+            "system:" + Settings.System.TRANSLUCENT_QUICK_SETTINGS_PREFERENCE_KEY;
+    private static final String STATUS_BAR_EXPANDED_ENABLED_PREFERENCE_KEY =
+            "system:" + Settings.System.STATUS_BAR_EXPANDED_ENABLED_PREFERENCE_KEY;
+    private static final String TRANSLUCENT_QUICK_SETTINGS_PERCENTAGE_PREFERENCE_KEY =
+            "system:" + Settings.System.TRANSLUCENT_QUICK_SETTINGS_PERCENTAGE_PREFERENCE_KEY;
+    private static final String BLUR_DARK_COLOR_PREFERENCE_KEY =
+            "system:" + Settings.System.BLUR_DARK_COLOR_PREFERENCE_KEY;
+    private static final String BLUR_LIGHT_COLOR_PREFERENCE_KEY =
+            "system:" + Settings.System.BLUR_LIGHT_COLOR_PREFERENCE_KEY;
+    private static final String BLUR_MIXED_COLOR_PREFERENCE_KEY =
+            "system:" + Settings.System.BLUR_MIXED_COLOR_PREFERENCE_KEY;
+    private static final String LOCK_ENABLE_QS =
+            Settings.Secure.LOCK_ENABLE_QS;
 
     private static final Rect mDummyDirtyRect = new Rect(0, 0, 1, 1);
 
@@ -111,7 +152,7 @@ public class NotificationPanelView extends PanelView implements
     private KeyguardAffordanceHelper mAfforanceHelper;
     private KeyguardUserSwitcher mKeyguardUserSwitcher;
     private KeyguardStatusBarView mKeyguardStatusBar;
-    protected QSContainer mQsContainer;
+    public static QSContainer mQsContainer;
     private AutoReinflateContainer mQsAutoReinflateContainer;
     private KeyguardStatusView mKeyguardStatusView;
     private TextView mClockView;
@@ -140,7 +181,9 @@ public class NotificationPanelView extends PanelView implements
     private boolean mQsExpanded;
     private boolean mQsExpandedWhenExpandingStarted;
     private boolean mQsFullyExpanded;
-    private boolean mKeyguardShowing;
+    public static boolean mKeyguardOrShadeShowing;
+    public static boolean mKeyguardShowing;
+    public static boolean mHeadsUpShowing;
     private boolean mDozing;
     private boolean mDozingOnDown;
     private int mStatusBarState;
@@ -211,10 +254,13 @@ public class NotificationPanelView extends PanelView implements
     private int mMaxFadeoutHeight;
     private int mLastOrientation = -1;
     private boolean mClosingWithAlphaFadeOut;
-    private boolean mHeadsUpAnimatingAway;
+    public static boolean mHeadsUpAnimatingAway;
     private boolean mLaunchingAffordance;
     private FalsingManager mFalsingManager;
     private String mLastCameraLaunchSource = KeyguardBottomAreaView.CAMERA_LAUNCH_SOURCE_AFFORDANCE;
+    public static LockPatternUtils mLockPatternUtils;
+
+    public static boolean mStatusBarAllowedOnSecureKeyguard = true;
 
     private Runnable mHeadsUpExistenceChangedRunnable = new Runnable() {
         @Override
@@ -231,14 +277,57 @@ public class NotificationPanelView extends PanelView implements
     private int mStatusBarHeaderHeight;
     private GestureDetector mDoubleTapGesture;
 
+    // QS alpha
+    private int mQSShadeAlpha;
+
+    // QS stroke
+    private int mQSStroke;
+    private int mCustomStrokeColor;
+    private int mCustomStrokeThickness;
+    private int mCustomCornerRadius;
+    private int mCustomDashWidth;
+    private int mCustomDashGap;
+
     private boolean mKeyguardWeatherEnabled;
     private TextView mKeyguardWeatherInfo;
     private WeatherControllerImpl mWeatherController;
+
+    public static boolean mBlurredStatusBarExpandedEnabled;
+    public static NotificationPanelView mNotificationPanelView;
+
+    private static int mBlurScale;
+    private static int mBlurRadius;
+    private static BlurUtils mBlurUtils;
+    private static FrameLayout mBlurredView;
+    private static ColorFilter mColorFilter;
+    private static int mBlurDarkColorFilter;
+    private static int mBlurMixedColorFilter;
+    private static int mBlurLightColorFilter;
+    private static int mQSTranslucencyPercentage;
+    private static AlphaAnimation mAlphaAnimation;
+    private static boolean mTranslucentQuickSettings;
+    private static FrameLayout mInnerBlurredView;
+
+    private static Animation.AnimationListener mAnimationListener = new Animation.AnimationListener() {
+
+        @Override
+        public void onAnimationStart(Animation anim) {
+            mBlurredView.setVisibility(View.VISIBLE);
+        }
+
+        @Override
+        public void onAnimationEnd(Animation anim) {}
+
+        @Override
+        public void onAnimationRepeat(Animation anim) {}
+
+    };
 
     public NotificationPanelView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setWillNotDraw(!DEBUG);
         mFalsingManager = FalsingManager.getInstance(context);
+        mLockPatternUtils = new LockPatternUtils(mContext);
 
         mDoubleTapGesture = new GestureDetector(mContext, new GestureDetector.SimpleOnGestureListener() {
             @Override
@@ -306,7 +395,125 @@ public class NotificationPanelView extends PanelView implements
             }
         });
 
-        mKeyguardWeatherInfo = (TextView) mKeyguardStatusView.findViewById(R.id.weather_info);
+        mKeyguardWeatherInfo = (TextView) mKeyguardStatusView.findViewById(R.id.current_temp);
+
+        mNotificationPanelView = this;
+
+        mBlurUtils = new BlurUtils(mNotificationPanelView.getContext());
+
+        mAlphaAnimation = new AlphaAnimation(0.0f, 1.0f);
+        mAlphaAnimation.setDuration(75);
+        mAlphaAnimation.setAnimationListener(mAnimationListener);
+
+        mBlurredView = new FrameLayout(mNotificationPanelView.getContext());
+        mInnerBlurredView = new FrameLayout(mNotificationPanelView.getContext());
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+
+        mBlurredView.addView(mInnerBlurredView, lp);
+        mNotificationPanelView.addView(mBlurredView, 0, lp);
+        mNotificationPanelView.requestLayout();
+        mBlurredView.setTag("ready_to_blur");
+
+        mBlurredView.setVisibility(View.INVISIBLE);
+
+        setQSStroke();
+        if (mTranslucentQuickSettings) {
+            handleQuickSettingsBackround();
+        } else {
+            setQSBackgroundAlpha();
+        }
+    }
+
+    private static void handleQuickSettingsBackround() {
+
+        if (mQsContainer == null)
+            return;
+        if (mKeyguardShowing) {
+            mQsContainer.getBackground().setAlpha(255);
+        } else {
+            mQsContainer.getBackground().setAlpha(mTranslucentQuickSettings ? mQSTranslucencyPercentage : 255);
+        }
+    }
+
+
+    public static void startBlurTask() {
+
+        if (!mBlurredStatusBarExpandedEnabled)
+            return;
+        try {
+            if (mBlurredView.getTag().toString().equals("blur_applied"))
+                return;
+        } catch (Exception e){
+        }
+        if (mNotificationPanelView == null)
+            return;
+        if (mHeadsUpShowing || mHeadsUpAnimatingAway)
+            return;
+        if (mKeyguardShowing && mTranslucentQuickSettings)
+            return;
+
+        BlurTask.setBlurTaskCallback(new BlurUtils.BlurTaskCallback() {
+
+            @Override
+            public void blurTaskDone(Bitmap blurredBitmap) {
+
+                if (blurredBitmap != null) {
+
+                    if (mBlurredView.getLayoutParams().width != mNotificationPanelView.getWidth()) {
+
+                        mBlurredView.getLayoutParams().width = mNotificationPanelView.getWidth();
+                        mBlurredView.requestLayout();
+                    }
+
+                    int[] dimens = BlurTask.getRealScreenDimensions();
+                    if (mNotificationPanelView.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
+                        mInnerBlurredView.getLayoutParams().width = dimens[0];
+                    mInnerBlurredView.getLayoutParams().height = dimens[1];
+                    mInnerBlurredView.requestLayout();
+
+                    BitmapDrawable drawable = new BitmapDrawable(blurredBitmap);
+                    drawable.setColorFilter(mColorFilter);
+
+                    mInnerBlurredView.setBackground(drawable);
+
+                    mBlurredView.setTag("blur_applied");
+
+                } else {
+
+                    mBlurredView.setBackgroundColor(mBlurLightColorFilter);
+
+                    mBlurredView.setTag("error");
+
+                }
+                mBlurredView.startAnimation(mAlphaAnimation);
+            }
+
+            @Override
+            public void dominantColor(int color) {
+
+                double lightness = DisplayUtils.getColorLightness(color);
+
+                if (lightness >= 0.0 && color <= 1.0) {
+                    if (lightness <= 0.33) {
+                        mColorFilter = new PorterDuffColorFilter(mBlurLightColorFilter, PorterDuff.Mode.MULTIPLY);
+
+                    } else if (lightness >= 0.34 && lightness <= 0.66) {
+                        mColorFilter = new PorterDuffColorFilter(mBlurMixedColorFilter, PorterDuff.Mode.MULTIPLY);
+
+                    } else if (lightness >= 0.67 && lightness <= 1.0) {
+                        mColorFilter = new PorterDuffColorFilter(mBlurDarkColorFilter, PorterDuff.Mode.MULTIPLY);
+                    }
+
+                } else {
+                    mColorFilter = new PorterDuffColorFilter(mBlurMixedColorFilter, PorterDuff.Mode.MULTIPLY);
+                }
+            }
+        });
+
+        BlurTask.setBlurEngine(BlurUtils.BlurEngine.RenderScriptBlur);
+
+        new BlurTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     @Override
@@ -397,7 +604,23 @@ public class NotificationPanelView extends PanelView implements
                 STATUS_BAR_QUICK_QS_PULLDOWN,
                 DOUBLE_TAP_SLEEP_GESTURE,
                 LOCK_SCREEN_WEATHER_ENABLED,
-                DOUBLE_TAP_SLEEP_ANYWHERE);
+                DOUBLE_TAP_SLEEP_ANYWHERE,
+                QS_TRANSPARENT_SHADE,
+                QS_STROKE,
+                QS_STROKE_COLOR,
+                QS_STROKE_THICKNESS,
+                QS_CORNER_RADIUS,
+                QS_STROKE_DASH_WIDTH,
+                QS_STROKE_DASH_GAP,
+                BLUR_SCALE_PREFERENCE_KEY,
+                BLUR_RADIUS_PREFERENCE_KEY,
+                TRANSLUCENT_QUICK_SETTINGS_PREFERENCE_KEY,
+                STATUS_BAR_EXPANDED_ENABLED_PREFERENCE_KEY,
+                TRANSLUCENT_QUICK_SETTINGS_PERCENTAGE_PREFERENCE_KEY,
+                BLUR_DARK_COLOR_PREFERENCE_KEY,
+                BLUR_LIGHT_COLOR_PREFERENCE_KEY,
+                BLUR_MIXED_COLOR_PREFERENCE_KEY,
+                LOCK_ENABLE_QS);
     }
 
     @Override
@@ -405,6 +628,95 @@ public class NotificationPanelView extends PanelView implements
         super.onDetachedFromWindow();
         TunerService.get(mContext).removeTunable(this);
         mWeatherController.removeCallback(this);
+    }
+
+    public static void recycle() {
+
+        mBlurredView.setBackground(null);
+
+        if (mInnerBlurredView != null && mInnerBlurredView.getBackground() != null) {
+            if (mInnerBlurredView.getBackground() instanceof BitmapDrawable) {
+                Bitmap bitmap = ((BitmapDrawable) mInnerBlurredView.getBackground()).getBitmap();
+                if (bitmap != null) {
+                    bitmap.recycle();
+                    bitmap = null;
+                }
+            }
+            mInnerBlurredView.setBackground(null);
+        }
+
+        mBlurredView.setTag("ready_to_blur");
+
+        mBlurredView.setVisibility(View.INVISIBLE);
+
+    }
+
+    public static class BlurTask extends AsyncTask<Void, Void, Bitmap> {
+
+        private static int[] mScreenDimens;
+        private static BlurUtils.BlurEngine mBlurEngine;
+        private static BlurUtils.BlurTaskCallback mCallback;
+
+        private Bitmap mScreenBitmap;
+
+        public static void setBlurEngine(BlurUtils.BlurEngine blurEngine) {
+            mBlurEngine = blurEngine;
+        }
+
+        public static void setBlurTaskCallback(BlurUtils.BlurTaskCallback callBack) {
+            mCallback = callBack;
+        }
+
+        public static int[] getRealScreenDimensions() {
+            return mScreenDimens;
+        }
+
+        @Override
+        protected void onPreExecute() {
+
+            Context context = mNotificationPanelView.getContext();
+            mScreenDimens = DisplayUtils.getRealScreenDimensions(context);
+
+            //We don't want SystemUI to crash for Arithmetic Exception
+            if(mBlurScale==0){
+                mBlurScale=1;
+            }
+
+            mScreenBitmap = DisplayUtils.takeSurfaceScreenshot(context, mBlurScale);
+        }
+
+        @Override
+        protected Bitmap doInBackground(Void... arg0) {
+
+            try {
+                if (mScreenBitmap == null)
+                    return null;
+
+                mCallback.dominantColor(DisplayUtils.getDominantColorByPixelsSampling(mScreenBitmap, 20, 20));
+
+                //We don't want SystemUI to crash for Arithmetic Exception
+                if(mBlurRadius == 0){
+                    mBlurRadius=1;
+                }
+
+                mScreenBitmap = mBlurUtils.renderScriptBlur(mScreenBitmap, mBlurRadius);
+                return mScreenBitmap;
+
+            } catch (OutOfMemoryError e) {
+                return null;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(Bitmap bitmap) {
+
+            if (bitmap != null) {
+                mCallback.blurTaskDone(bitmap);
+
+            } else {
+                mCallback.blurTaskDone(null);
+            }
+        }
     }
 
     private void startQsSizeChangeAnimation(int oldHeight, final int newHeight) {
@@ -552,9 +864,14 @@ public class NotificationPanelView extends PanelView implements
         requestLayout();
     }
 
+    public static boolean isQSEventBlocked() {
+        return mLockPatternUtils.isSecure(KeyguardUpdateMonitor.getCurrentUser())
+            && !mStatusBarAllowedOnSecureKeyguard && mKeyguardOrShadeShowing;
+    }
+
     public void setQsExpansionEnabled(boolean qsExpansionEnabled) {
-        mQsExpansionEnabled = qsExpansionEnabled;
-        mQsContainer.setHeaderClickable(qsExpansionEnabled);
+        mQsExpansionEnabled = qsExpansionEnabled && !isQSEventBlocked();
+        mQsContainer.setHeaderClickable(mQsExpansionEnabled);
     }
 
     @Override
@@ -635,7 +952,7 @@ public class NotificationPanelView extends PanelView implements
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent event) {
-        if (mBlockTouches || mQsContainer.isCustomizing()) {
+        if (mBlockTouches || mNotificationContainerParent.isCustomizerShowingOrAnimating()) {
             return false;
         }
         initDownStates(event);
@@ -795,7 +1112,7 @@ public class NotificationPanelView extends PanelView implements
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (mBlockTouches || mQsContainer.isCustomizing()) {
+        if (mBlockTouches || mNotificationContainerParent.isCustomizerShowingOrAnimating()) {
             return false;
         }
         if (mDoubleTapToSleepEnabled
@@ -1082,12 +1399,15 @@ public class NotificationPanelView extends PanelView implements
             boolean goingToFullShade) {
         int oldState = mStatusBarState;
         boolean keyguardShowing = statusBarState == StatusBarState.KEYGUARD;
+        boolean keyguardOrShadeShowing = statusBarState == StatusBarState.KEYGUARD
+                || statusBarState == StatusBarState.SHADE_LOCKED;
         setKeyguardStatusViewVisibility(statusBarState, keyguardFadingAway, goingToFullShade);
         setKeyguardBottomAreaVisibility(statusBarState, goingToFullShade);
 
         mStatusBarState = statusBarState;
         mKeyguardShowing = keyguardShowing;
         mQsContainer.setKeyguardShowing(mKeyguardShowing);
+        mKeyguardOrShadeShowing = keyguardOrShadeShowing;
 
         if (oldState == StatusBarState.KEYGUARD
                 && (goingToFullShade || statusBarState == StatusBarState.SHADE_LOCKED)) {
@@ -1102,6 +1422,9 @@ public class NotificationPanelView extends PanelView implements
         } else {
             mKeyguardStatusBar.setAlpha(1f);
             mKeyguardStatusBar.setVisibility(keyguardShowing ? View.VISIBLE : View.INVISIBLE);
+            if (keyguardShowing) {
+                mKeyguardStatusBar.toggleContents(true);
+            }
             if (keyguardShowing && oldState != mStatusBarState) {
                 mKeyguardBottomArea.onKeyguardShowingChanged();
                 mQsContainer.hideImmediately();
@@ -1112,6 +1435,14 @@ public class NotificationPanelView extends PanelView implements
         }
         resetVerticalPanelPosition();
         updateQsState();
+        try {
+            if (mTranslucentQuickSettings) {
+                handleQuickSettingsBackround();
+            } else {
+                setQSBackgroundAlpha();
+            }
+        } catch (Exception e){
+        }
     }
 
     private final Runnable mAnimateKeyguardStatusViewInvisibleEndRunnable = new Runnable() {
@@ -2259,9 +2590,11 @@ public class NotificationPanelView extends PanelView implements
     @Override
     public void onHeadsUpPinnedModeChanged(final boolean inPinnedMode) {
         if (inPinnedMode) {
+            mHeadsUpShowing = true;
             mHeadsUpExistenceChangedRunnable.run();
             updateNotificationTranslucency();
         } else {
+            mHeadsUpShowing = false;
             mHeadsUpAnimatingAway = true;
             mNotificationStackScroller.runAfterAnimationFinished(
                     mHeadsUpExistenceChangedRunnable);
@@ -2448,10 +2781,6 @@ public class NotificationPanelView extends PanelView implements
         if (!mKeyguardWeatherEnabled || Double.isNaN(info.temp) || info.condition == null) {
             mKeyguardWeatherInfo.setVisibility(GONE);
         } else {
-            mKeyguardWeatherInfo.setText(mContext.getString(
-                    R.string.keyguard_status_view_weather_format,
-                    WeatherUtils.formatTemperature(info.temp, info.tempUnit),
-                    info.condition));
             mKeyguardWeatherInfo.setVisibility(VISIBLE);
         }
     }
@@ -2477,8 +2806,132 @@ public class NotificationPanelView extends PanelView implements
             case DOUBLE_TAP_SLEEP_ANYWHERE:
                 mDoubleTapToSleepAnywhere = newValue == null || Integer.parseInt(newValue) == 1;
                 break;
+            case QS_TRANSPARENT_SHADE:
+                mQSShadeAlpha =
+                        newValue == null ? 255 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_STROKE:
+                mQSStroke =
+                        newValue == null ? 0 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_STROKE_COLOR:
+                mCustomStrokeColor =
+                        newValue == null ? mContext.getResources().getColor(R.color.system_accent_color) : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_STROKE_THICKNESS:
+                mCustomStrokeThickness =
+                        newValue == null ? 4 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_CORNER_RADIUS:
+                mCustomCornerRadius =
+                        newValue == null ? 5 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_STROKE_DASH_WIDTH:
+                mCustomDashWidth =
+                        newValue == null ? 0 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case QS_STROKE_DASH_GAP:
+                mCustomDashGap =
+                        newValue == null ? 10 : Integer.parseInt(newValue);
+                setQSSettings();
+                break;
+            case BLUR_SCALE_PREFERENCE_KEY:
+                mBlurScale =
+                        newValue == null ? 10 : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case BLUR_RADIUS_PREFERENCE_KEY:
+                mBlurRadius =
+                        newValue == null ? 5 : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case TRANSLUCENT_QUICK_SETTINGS_PREFERENCE_KEY:
+                mTranslucentQuickSettings =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                setBlurSettings();
+                break;
+            case STATUS_BAR_EXPANDED_ENABLED_PREFERENCE_KEY:
+                mBlurredStatusBarExpandedEnabled =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                setBlurSettings();
+                break;
+            case TRANSLUCENT_QUICK_SETTINGS_PERCENTAGE_PREFERENCE_KEY:
+                mQSTranslucencyPercentage =
+                        newValue == null ? 60 : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case BLUR_DARK_COLOR_PREFERENCE_KEY:
+                mBlurDarkColorFilter =
+                        newValue == null ? Color.LTGRAY : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case BLUR_LIGHT_COLOR_PREFERENCE_KEY:
+                mBlurLightColorFilter =
+                        newValue == null ? Color.DKGRAY : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case BLUR_MIXED_COLOR_PREFERENCE_KEY:
+                mBlurMixedColorFilter =
+                        newValue == null ? Color.GRAY : Integer.parseInt(newValue);
+                setBlurSettings();
+                break;
+            case LOCK_ENABLE_QS:
+                mStatusBarAllowedOnSecureKeyguard =
+                        newValue == null || Integer.parseInt(newValue) == 1;
+                break;
             default:
                 break;
+        }
+    }
+
+    private void setQSSettings() {
+        setQSStroke();
+        if (mTranslucentQuickSettings) {
+            handleQuickSettingsBackround();
+        } else {
+            setQSBackgroundAlpha();
+        }
+    }
+
+    private void setBlurSettings() {
+        mQSTranslucencyPercentage = 255 - ((mQSTranslucencyPercentage * 255) / 100);
+        handleQuickSettingsBackround();
+    }
+
+    private void setQSBackgroundAlpha() {
+        if (mQsContainer != null) {
+            mQsContainer.getBackground().setAlpha(mQSShadeAlpha);
+        }
+    }
+
+    private void setQSStroke() {
+        final GradientDrawable qSGd = new GradientDrawable();
+        if (mQsContainer != null) {
+            if (mQSStroke == 0) {
+                /*qSGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+                qSGd.setStroke(0, mContext.getResources().getColor(R.color.system_accent_color));
+                qSGd.setCornerRadius(mCustomCornerRadius);
+                mQsContainer.setBackground(qSGd);*/
+                // Don't do anything when disabled, it fucks up themes that use drawable instead of color
+            } else if (mQSStroke == 1) { // use accent color for border
+                qSGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+                qSGd.setStroke(mCustomStrokeThickness, mContext.getResources().getColor(R.color.system_accent_color),
+                        mCustomDashWidth, mCustomDashGap);
+            } else if (mQSStroke == 2) { // use custom border color
+                qSGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+                qSGd.setStroke(mCustomStrokeThickness, mCustomStrokeColor, mCustomDashWidth, mCustomDashGap);
+            }
+
+            if (mQSStroke != 0) {
+                qSGd.setCornerRadius(mCustomCornerRadius);
+                mQsContainer.setBackground(qSGd);
+            }
         }
     }
 }

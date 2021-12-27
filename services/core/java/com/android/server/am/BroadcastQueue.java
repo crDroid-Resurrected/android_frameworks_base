@@ -268,7 +268,7 @@ public final class BroadcastQueue {
 
         r.receiver = app.thread.asBinder();
         r.curApp = app;
-        app.curReceiver = r;
+        app.curReceivers.add(r);
         app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_RECEIVER);
         mService.updateLruProcessLocked(app, false, null);
         mService.updateOomAdjLocked();
@@ -296,7 +296,7 @@ public final class BroadcastQueue {
                         "Process cur broadcast " + r + ": NOT STARTED!");
                 r.receiver = null;
                 r.curApp = null;
-                app.curReceiver = null;
+                app.curReceivers.remove(r);
             }
         }
     }
@@ -397,8 +397,8 @@ public final class BroadcastQueue {
         }
         r.receiver = null;
         r.intent.setComponent(null);
-        if (r.curApp != null && r.curApp.curReceiver == r) {
-            r.curApp.curReceiver = null;
+        if (r.curApp != null && r.curApp.curReceivers.contains(r)) {
+            r.curApp.curReceivers.remove(r);
         }
         if (r.curFilter != null) {
             r.curFilter.receiverList.curBroadcast = null;
@@ -423,7 +423,8 @@ public final class BroadcastQueue {
             ActivityInfo nextReceiver;
             if (r.nextReceiver < r.receivers.size()) {
                 Object obj = r.receivers.get(r.nextReceiver);
-                nextReceiver = (obj instanceof ActivityInfo) ? (ActivityInfo)obj : null;
+                nextReceiver = (obj instanceof ResolveInfo) ?
+                        ((ResolveInfo) obj).activityInfo : null;
             } else {
                 nextReceiver = null;
             }
@@ -651,7 +652,7 @@ public final class BroadcastQueue {
                 // things that directly call the IActivityManager API, which
                 // are already core system stuff so don't matter for this.
                 r.curApp = filter.receiverList.app;
-                filter.receiverList.app.curReceiver = r;
+                filter.receiverList.app.curReceivers.add(r);
                 mService.updateOomAdjLocked(r.curApp);
             }
         }
@@ -679,7 +680,7 @@ public final class BroadcastQueue {
                 r.curFilter = null;
                 filter.receiverList.curBroadcast = null;
                 if (filter.receiverList.app != null) {
-                    filter.receiverList.app.curReceiver = null;
+                    filter.receiverList.app.curReceivers.remove(r);
                 }
             }
         }
@@ -1108,6 +1109,15 @@ public final class BroadcastQueue {
                         + " to " + r.curApp + ": process crashing");
                 skip = true;
             }
+
+            if (!skip && !mService.mUserController.isUserRunningLocked(UserHandle.getUserId(
+                    info.activityInfo.applicationInfo.uid), 0)) {
+                Slog.w(TAG, "Skipping delivery to " + info.activityInfo.packageName + " / "
+                                + info.activityInfo.applicationInfo.uid
+                                + " : user is stopped");
+                skip = true;
+            }
+
             if (!skip) {
                 boolean isAvailable = false;
                 try {
@@ -1235,12 +1245,7 @@ public final class BroadcastQueue {
                     // from a client, so throwing an exception out from here
                     // will crash the entire system instead of just whoever
                     // sent the broadcast.
-                    logBroadcastReceiverDiscardLocked(r);
-                    finishReceiverLocked(r, r.resultCode, r.resultData,
-                            r.resultExtras, r.resultAbort, false);
-                    scheduleBroadcastsLocked();
-                    // We need to reset the state if we failed to start the receiver.
-                    r.state = BroadcastRecord.IDLE;
+                    resetBroadcastStateAndContinueDelivery(r);
                     return;
                 }
 
@@ -1252,6 +1257,11 @@ public final class BroadcastQueue {
             if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
                     "Need to start app ["
                     + mQueueName + "] " + targetProcess + " for broadcast " + r);
+            // skip send broadcast to the receiver whoes user has not started.
+            if (!isUserOfReceiverStarted(info)) {
+                resetBroadcastStateAndContinueDelivery(r);
+                return;
+            }
             if ((r.curApp=mService.startProcessLocked(targetProcess,
                     info.activityInfo.applicationInfo, true,
                     r.intent.getFlags() | Intent.FLAG_FROM_BACKGROUND,
@@ -1264,17 +1274,33 @@ public final class BroadcastQueue {
                         + info.activityInfo.applicationInfo.packageName + "/"
                         + info.activityInfo.applicationInfo.uid + " for broadcast "
                         + r.intent + ": process is bad");
-                logBroadcastReceiverDiscardLocked(r);
-                finishReceiverLocked(r, r.resultCode, r.resultData,
-                        r.resultExtras, r.resultAbort, false);
-                scheduleBroadcastsLocked();
-                r.state = BroadcastRecord.IDLE;
+                resetBroadcastStateAndContinueDelivery(r);
                 return;
             }
 
             mPendingBroadcast = r;
             mPendingBroadcastRecvIndex = recIdx;
         }
+    }
+
+    private final void resetBroadcastStateAndContinueDelivery(BroadcastRecord r) {
+        logBroadcastReceiverDiscardLocked(r);
+        finishReceiverLocked(r, r.resultCode, r.resultData,
+                r.resultExtras, r.resultAbort, false);
+        scheduleBroadcastsLocked();
+        // We need to reset the state if we failed to start or skip the receiver
+        r.state = BroadcastRecord.IDLE;
+    }
+
+    private final boolean isUserOfReceiverStarted(ResolveInfo info) {
+        // the process has not start yet, do not concern the isolated uid
+        final int userId = UserHandle.getUserId(info.activityInfo.applicationInfo.uid);
+        if (mService.mUserController.hasStartedUserState(userId)) {
+            return true;
+        }
+        Slog.w(TAG, "The user[" + userId + "] of receiver:"
+                + info + " is not started, skip it !");
+        return false;
     }
 
     final void setBroadcastTimeoutLocked(long timeoutTime) {
@@ -1435,6 +1461,14 @@ public final class BroadcastQueue {
 
         for (int i = mOrderedBroadcasts.size() - 1; i >= 0; i--) {
             didSomething |= mOrderedBroadcasts.get(i).cleanupDisabledPackageReceiversLocked(
+                    packageName, filterByClasses, userId, doit);
+            if (!doit && didSomething) {
+                return true;
+            }
+        }
+
+        if (mPendingBroadcast != null) {
+            didSomething |= mPendingBroadcast.cleanupDisabledPackageReceiversLocked(
                     packageName, filterByClasses, userId, doit);
             if (!doit && didSomething) {
                 return true;

@@ -24,11 +24,13 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.util.LocalLog;
 import android.util.Slog;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.Preconditions;
+import com.android.server.power.ShutdownThread;
 import com.google.android.collect.Lists;
 
 import java.io.FileDescriptor;
@@ -136,6 +138,12 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
                 listenToSocket();
             } catch (Exception e) {
                 loge("Error in NativeDaemonConnector: " + e);
+                String shutdownAct = SystemProperties.get(
+                        ShutdownThread.SHUTDOWN_ACTION_PROPERTY, "");
+                if (shutdownAct != null && shutdownAct.length() > 0) {
+                    // The device is in middle of shutdown.
+                    break;
+                }
                 SystemClock.sleep(5000);
             }
         }
@@ -455,7 +463,7 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
                     + Integer.toHexString(System.identityHashCode(mWarnIfHeld)), new Throwable());
         }
 
-        final long startTime = SystemClock.elapsedRealtime();
+        final long startTime = SystemClock.uptimeMillis();
 
         final ArrayList<NativeDaemonEvent> events = Lists.newArrayList();
 
@@ -493,7 +501,7 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
             events.add(event);
         } while (event.isClassContinue());
 
-        final long endTime = SystemClock.elapsedRealtime();
+        final long endTime = SystemClock.uptimeMillis();
         if (endTime - startTime > WARN_EXECUTE_DELAY_MS) {
             loge("NDC Command {" + logCmd + "} took too long (" + (endTime - startTime) + "ms)");
         }

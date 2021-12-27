@@ -241,6 +241,7 @@ public class ScrollView extends FrameLayout {
 
     private void initScrollView() {
         mScroller = new OverScroller(getContext());
+        mScroller.setFriction(0.006f);
         setFocusable(true);
         setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
         setWillNotDraw(false);
@@ -690,7 +691,9 @@ public class ScrollView extends FrameLayout {
                     if (overScrollBy(0, deltaY, 0, mScrollY, 0, range, 0, mOverscrollDistance, true)
                             && !hasNestedScrollingParent()) {
                         // Break our velocity if we hit a scroll barrier.
-                        mVelocityTracker.clear();
+                        if (mVelocityTracker != null) {
+                            mVelocityTracker.clear();
+                        }
                     }
 
                     final int scrolledDeltaY = mScrollY - oldY;
@@ -1875,7 +1878,7 @@ public class ScrollView extends FrameLayout {
 
         @Override
         public String toString() {
-            return "HorizontalScrollView.SavedState{"
+            return "ScrollView.SavedState{"
                     + Integer.toHexString(System.identityHashCode(this))
                     + " scrollPosition=" + scrollPosition + "}";
         }

@@ -123,6 +123,7 @@ import com.android.server.pm.UserManagerService;
 
 import org.xmlpull.v1.XmlPullParserException;
 
+import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -281,6 +282,7 @@ public class AudioService extends IAudioService.Stub {
 
     /* Sound effect file names  */
     private static final String SOUND_EFFECTS_PATH = "/media/audio/ui/";
+    private static final String SOUND_EFFECTS_THEMED_PATH = "/data/system/theme/audio/ui/";
     private static final List<String> SOUND_EFFECT_FILES = new ArrayList<String>();
 
     /* Sound effect file name mapping sound effect id (AudioManager.FX_xxx) to
@@ -642,6 +644,16 @@ public class AudioService extends IAudioService.Stub {
         }
     }
 
+    // only these packages are allowed to override Pulse visualizer lock
+    private static final String[] VISUALIZER_WHITELIST = new String[] {
+            "android",
+            "com.android.systemui",
+            "com.android.keyguard",
+            "com.google.android.googlequicksearchbox"
+    };
+
+    private boolean mVisualizerLocked;
+
     ///////////////////////////////////////////////////////////////////////////
     // Construction
     ///////////////////////////////////////////////////////////////////////////
@@ -725,6 +737,9 @@ public class AudioService extends IAudioService.Stub {
         readPersistedSettings();
         readUserRestrictions();
         mSettingsObserver = new SettingsObserver();
+
+        // Update volumes steps before creatingStreamStates!
+        initVolumeSteps();
         createStreamStates();
 
         mMediaFocusControl = new MediaFocusControl(mContext);
@@ -930,6 +945,60 @@ public class AudioService extends IAudioService.Stub {
         onIndicateSystemReady();
         // indicate the end of reconfiguration phase to audio HAL
         AudioSystem.setParameters("restarting=false");
+    }
+
+    private void initVolumeSteps() {
+        // Defaults for reference
+        // 5, // STREAM_VOICE_CALL
+        // 7, // STREAM_SYSTEM
+        // 7, // STREAM_RING
+        // 15, // STREAM_MUSIC
+        // 7, // STREAM_ALARM
+        // 7, // STREAM_NOTIFICATION
+        // 15, // STREAM_BLUETOOTH_SCO
+        // 7, // STREAM_SYSTEM_ENFORCED
+        // 15, // STREAM_DTMF
+        // 15 // STREAM_TTS
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL] =
+                Settings.System.getInt(mContentResolver, "volume_steps_voice_call",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_SYSTEM] =
+                Settings.System.getInt(mContentResolver, "volume_steps_system",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_SYSTEM]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_RING] =
+                Settings.System.getInt(mContentResolver, "volume_steps_ring",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_RING]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC] =
+                Settings.System.getInt(mContentResolver, "volume_steps_music",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_ALARM] =
+                Settings.System.getInt(mContentResolver, "volume_steps_alarm",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_ALARM]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_NOTIFICATION] =
+                Settings.System.getInt(mContentResolver, "volume_steps_notification",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_NOTIFICATION]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_BLUETOOTH_SCO] =
+                Settings.System.getInt(mContentResolver, "volume_steps_bluetooth_sco",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_BLUETOOTH_SCO]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_SYSTEM_ENFORCED] =
+                Settings.System.getInt(mContentResolver, "volume_steps_system_enforced",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_SYSTEM_ENFORCED]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_DTMF] =
+                Settings.System.getInt(mContentResolver, "volume_steps_dtmf",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_DTMF]);
+
+        MAX_STREAM_VOLUME[AudioSystem.STREAM_TTS] =
+                Settings.System.getInt(mContentResolver, "volume_steps_tts",
+                        MAX_STREAM_VOLUME[AudioSystem.STREAM_TTS]);
     }
 
     private void createAudioSystemThread() {
@@ -2171,6 +2240,10 @@ public class AudioService extends IAudioService.Stub {
                 userId);
     }
 
+    protected static void setMaxStreamVolume(int streamType, int maxVol) {
+        MAX_STREAM_VOLUME[streamType] = maxVol;
+    }
+
     /** @see AudioManager#getStreamVolume(int) */
     public int getStreamVolume(int streamType) {
         ensureValidStreamType(streamType);
@@ -2194,6 +2267,13 @@ public class AudioService extends IAudioService.Stub {
     public int getStreamMaxVolume(int streamType) {
         ensureValidStreamType(streamType);
         return (mStreamStates[streamType].getMaxIndex() + 5) / 10;
+    }
+
+    /** @see AudioManager#setStreamMaxVolume(int,int) */
+    public void setStreamMaxVolume(int streamType, int maxVol) {
+        ensureValidStreamType(streamType);
+        mStreamStates[streamType].setMaxIndex(maxVol);
+        setMaxStreamVolume(streamType, maxVol);
     }
 
     /** @see AudioManager#getStreamMinVolume(int) */
@@ -3788,6 +3868,25 @@ public class AudioService extends IAudioService.Stub {
         return (mMuteAffectedStreams & (1 << streamType)) != 0;
     }
 
+    /** @hide */
+    public boolean isVisualizerLocked(String callingPackage) {
+        boolean isSystem = false;
+        for (int i = 0; i < VISUALIZER_WHITELIST.length; i++) {
+            if (TextUtils.equals(callingPackage, VISUALIZER_WHITELIST[i])) {
+                isSystem = true;
+                break;
+            }
+        }
+        return !isSystem && mVisualizerLocked;
+    }
+
+    /** @hide */
+    public void setVisualizerLocked(boolean doLock) {
+        if (mVisualizerLocked != doLock) {
+            mVisualizerLocked = doLock;
+        }
+    }
+
     private void ensureValidDirection(int direction) {
         switch (direction) {
             case AudioManager.ADJUST_LOWER:
@@ -4132,7 +4231,7 @@ public class AudioService extends IAudioService.Stub {
     public class VolumeStreamState {
         private final int mStreamType;
         private final int mIndexMin;
-        private final int mIndexMax;
+        private int mIndexMax;
 
         private boolean mIsMuted;
         private String mVolumeIndexSettingName;
@@ -4389,6 +4488,16 @@ public class AudioService extends IAudioService.Stub {
 
         public int getMaxIndex() {
             return mIndexMax;
+        }
+
+        public void setMaxIndex(int maxVol) {
+            mIndexMax = maxVol;
+            AudioSystem.initStreamVolume(mStreamType, 0, mIndexMax);
+            mIndexMax = maxVol;
+            mIndexMax *= 10;
+            // Volume steps changed, fire the intent.
+            Intent intent = new Intent(AudioManager.VOLUME_STEPS_CHANGED_ACTION);
+            sendBroadcastToAll(intent);
         }
 
         public int getMinIndex() {
@@ -4689,9 +4798,16 @@ public class AudioService extends IAudioService.Stub {
                         continue;
                     }
                     if (poolId[SOUND_EFFECT_FILES_MAP[effect][0]] == -1) {
-                        String filePath = Environment.getRootDirectory()
-                                + SOUND_EFFECTS_PATH
-                                + SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effect][0]);
+                        String filePath = "";
+                        File theme_file = new File(SOUND_EFFECTS_THEMED_PATH +
+                            SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effect][0]));
+                        if (theme_file.exists()) {
+                            filePath = theme_file.getAbsolutePath();
+                        } else {
+                            filePath = Environment.getRootDirectory()
+                                    + SOUND_EFFECTS_PATH
+                                    + SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effect][0]);
+                        }
                         int sampleId = mSoundPool.load(filePath, 0);
                         if (sampleId <= 0) {
                             Log.w(TAG, "Soundpool could not load file: "+filePath);
@@ -4797,8 +4913,15 @@ public class AudioService extends IAudioService.Stub {
                 } else {
                     MediaPlayer mediaPlayer = new MediaPlayer();
                     try {
-                        String filePath = Environment.getRootDirectory() + SOUND_EFFECTS_PATH +
-                                    SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effectType][0]);
+                        String filePath = "";
+                        File theme_file = new File(SOUND_EFFECTS_THEMED_PATH +
+                                    SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effectType][0]));
+                        if (theme_file.exists()) {
+                            filePath = theme_file.getAbsolutePath();
+                        } else {
+                            filePath = Environment.getRootDirectory() + SOUND_EFFECTS_PATH +
+                                        SOUND_EFFECT_FILES.get(SOUND_EFFECT_FILES_MAP[effectType][0]);
+                        }
                         mediaPlayer.setDataSource(filePath);
                         mediaPlayer.setAudioStreamType(AudioSystem.STREAM_SYSTEM);
                         mediaPlayer.prepare();

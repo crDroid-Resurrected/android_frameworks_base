@@ -64,6 +64,7 @@ oneway interface IStatusBar
     void preloadRecentApps();
     void cancelPreloadRecentApps();
     void showScreenPinningRequest(int taskId);
+    void toggleOrientationListener(boolean enable);
 
     void dismissKeyboardShortcutsMenu();
     void toggleKeyboardShortcutsMenu(int deviceId);
@@ -96,6 +97,11 @@ oneway interface IStatusBar
 
     void showAssistDisclosure();
     void startAssist(in Bundle args);
+    void screenPinningStateChanged(boolean enabled);
+    void leftInLandscapeChanged(boolean isLeft);
+
+    // SystemUI Restart method for masquerade
+    void restartUI();
 
     /**
      * Notifies the status bar that a camera launch gesture has been detected.

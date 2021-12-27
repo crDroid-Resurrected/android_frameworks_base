@@ -84,6 +84,10 @@
     <protected-broadcast android:name="android.intent.action.USER_INITIALIZE" />
     <protected-broadcast android:name="android.intent.action.INTENT_FILTER_NEEDS_VERIFICATION" />
     <protected-broadcast android:name="android.intent.action.SU_SESSION_CHANGED" />
+    <protected-broadcast android:name="android.intent.action.OVERLAY_ADDED" />
+    <protected-broadcast android:name="android.intent.action.OVERLAY_CHANGED" />
+    <protected-broadcast android:name="android.intent.action.OVERLAY_REMOVED" />
+    <protected-broadcast android:name="android.intent.action.OVERLAY_PRIORITY_CHANGED" />
 
     <protected-broadcast android:name="Auth_password_wrong" />
     <protected-broadcast android:name="android.os.action.POWER_SAVE_MODE_CHANGED" />
@@ -520,6 +524,14 @@
 
     <protected-broadcast
             android:name="com.android.server.policy.PhoneWindowManager.ACTION_TORCH_OFF" />
+
+    <!-- Custom protected broadcasts -->
+    <protected-broadcast android:name="org.omnirom.omniswitch.ACTION_TOGGLE_OVERLAY2" />
+    <protected-broadcast android:name="org.omnirom.omniswitch.ACTION_RESTORE_HOME_STACK" />
+    <protected-broadcast android:name="org.omnirom.omniswitch.ACTION_PRELOAD_TASKS" />
+    <protected-broadcast android:name="org.omnirom.omniswitch.ACTION_HIDE_OVERLAY" />
+    <protected-broadcast android:name="projekt.substratum.APP_CRASHED" />
+    <protected-broadcast android:name="intent_navbar_edit" />
 
     <!-- ====================================================================== -->
     <!--                          RUNTIME PERMISSIONS                           -->
@@ -1958,6 +1970,13 @@
         android:description="@string/permdesc_getPackageSize"
         android:protectionLevel="normal" />
 
+    <!-- @hide Allows an application to change the package signature as
+         seen by applications -->
+    <permission android:name="android.permission.FAKE_PACKAGE_SIGNATURE"
+        android:protectionLevel="dangerous"
+        android:label="@string/permlab_fakePackageSignature"
+        android:description="@string/permdesc_fakePackageSignature" />
+
     <!-- @deprecated No longer useful, see
          {@link android.content.pm.PackageManager#addPackageToPreferred}
          for details. -->
@@ -3009,9 +3028,10 @@
         android:protectionLevel="signature" />
 
     <!-- Must be required by an {@link
-         android.service.notification.NotificationRankerService         to ensure that only the system can bind to it.
+         android.service.notification.NotificationRankerService
+         to ensure that only the system can bind to it.
          <p>Protection level: signature
-         @hide This is not a third-party API (intended for system apps). -->
+         @hide This is not a third-party API (intended for system apps).
     -->
     <permission android:name="android.permission.BIND_NOTIFICATION_RANKER_SERVICE"
         android:protectionLevel="signature" />
@@ -3190,6 +3210,19 @@
     <permission android:name="android.permission.SUBSTITUTE_NOTIFICATION_APP_NAME"
                 android:protectionLevel="signature|privileged" />
 
+    <!-- Allows an application to make calls to OverlayManagerService.
+         @hide -->
+    <permission android:name="oms.permission.MODIFY_OVERLAYS"
+        android:label="@string/permlab_modifyOverlays"
+        android:description="@string/permdesc_modifyOverlays"
+        android:protectionLevel="signatureOrSystem" />
+
+    <!-- Allows an application to restart the SystemUI process.-->
+    <permission android:name="android.permission.RESTART_UI"
+        android:label="@string/permlab_restartUI"
+        android:description="@string/permdesc_restartUI"
+        android:protectionLevel="signature" />
+
     <application android:process="system"
                  android:persistent="true"
                  android:hasCode="false"
@@ -3236,7 +3269,7 @@
                 android:label="@string/managed_profile_label">
         </activity-alias>
         <activity android:name="com.android.internal.app.HeavyWeightSwitcherActivity"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog"
+                android:theme="@style/HeavyWeightSwitcherActivityTheme"
                 android:label="@string/heavy_weight_switcher_title"
                 android:finishOnCloseSystemDialogs="true"
                 android:excludeFromRecents="true"
@@ -3269,7 +3302,7 @@
         <activity android:name="android.accounts.ChooseAccountActivity"
                 android:excludeFromRecents="true"
                 android:exported="true"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog"
+                android:theme="@style/ChooseAccountActivityTheme"
                 android:label="@string/choose_account_label"
                 android:process=":ui">
         </activity>
@@ -3277,14 +3310,14 @@
         <activity android:name="android.accounts.ChooseTypeAndAccountActivity"
                 android:excludeFromRecents="true"
                 android:exported="true"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog"
+                android:theme="@style/ChooseTypeAndAccountActivityTheme"
                 android:label="@string/choose_account_label"
                 android:process=":ui">
         </activity>
 
         <activity android:name="android.accounts.ChooseAccountTypeActivity"
                 android:excludeFromRecents="true"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog"
+                android:theme="@style/ChooseAccountTypeActivityTheme"
                 android:label="@string/choose_account_label"
                 android:process=":ui">
         </activity>
@@ -3292,19 +3325,19 @@
         <activity android:name="android.accounts.CantAddAccountActivity"
                 android:excludeFromRecents="true"
                 android:exported="true"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog.NoActionBar"
+                android:theme="@style/CantAddAccountActivityTheme"
                 android:process=":ui">
         </activity>
 
         <activity android:name="android.accounts.GrantCredentialsPermissionActivity"
                 android:excludeFromRecents="true"
                 android:exported="true"
-                android:theme="@style/Theme.DeviceDefault.Light.DialogWhenLarge"
+                android:theme="@style/GrantCredentialsPermissionActivityTheme"
                 android:process=":ui">
         </activity>
 
         <activity android:name="android.content.SyncActivityTooManyDeletes"
-               android:theme="@style/Theme.DeviceDefault.Light.Dialog"
+               android:theme="@style/SyncActivityTooManyDeletesTheme"
                android:label="@string/sync_too_many_deletes"
                android:process=":ui">
         </activity>
@@ -3324,7 +3357,7 @@
         </activity>
 
         <activity android:name="com.android.internal.app.NetInitiatedActivity"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog.Alert"
+                android:theme="@style/NetInitiatedActivityTheme"
                 android:excludeFromRecents="true"
                 android:process=":ui">
         </activity>
@@ -3345,7 +3378,7 @@
         <activity android:name="com.android.internal.app.ConfirmUserCreationActivity"
                 android:excludeFromRecents="true"
                 android:process=":ui"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog.Alert">
+                android:theme="@style/ConfirmUserCreationActivityTheme">
             <intent-filter android:priority="1000">
                 <action android:name="android.os.action.CREATE_USER" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -3353,7 +3386,7 @@
         </activity>
 
         <activity android:name="com.android.internal.app.UnlaunchableAppActivity"
-                android:theme="@style/Theme.DeviceDefault.Light.Dialog.Alert"
+                android:theme="@style/UnlaunchableAppActivityTheme"
                 android:excludeFromRecents="true"
                 android:process=":ui">
         </activity>

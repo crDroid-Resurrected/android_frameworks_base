@@ -47,6 +47,57 @@
         android:orientation="horizontal"
         >
 
+        <com.android.keyguard.AlphaOptimizedLinearLayout
+            android:id="@+id/left_custom_layout"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            >
+
+            <ImageView
+                android:id="@+id/left_crdroid_logo"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:paddingEnd="1dip"
+                android:src="@drawable/ic_crdroid_logo"
+                android:scaleType="center"
+                android:visibility="gone"
+                />
+
+            <com.android.systemui.crdroid.carrierlabel.CarrierLabel
+                android:id="@+id/statusbar_carrier_text"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:maxLines="1"
+                android:textAppearance="@style/TextAppearance.StatusBar.CarrierLabel"
+                android:gravity="left|center_vertical"
+                android:paddingEnd="1dip"
+                android:visibility="gone"
+                />
+
+            <com.android.systemui.crdroid.statusbarweather.StatusBarWeatherImageLeft
+                android:id="@+id/left_weather_image"
+                android:layout_width="24dp"
+                android:layout_height="match_parent"
+                android:paddingStart="2dip"
+                android:paddingEnd="1dip"
+                android:visibility="gone"
+                />
+
+            <com.android.systemui.crdroid.statusbarweather.StatusBarWeatherLeft
+                android:id="@+id/left_weather_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:maxLines="1"
+                android:textAppearance="@style/TextAppearance.StatusBar.Expanded.Weather.Detailed"
+                android:gravity="left|center_vertical"
+                android:paddingStart="2dip"
+                android:paddingEnd="1dip"
+                android:visibility="gone"
+                />
+
+        </com.android.keyguard.AlphaOptimizedLinearLayout>
+
         <!-- The alpha of this area is controlled from both PhoneStatusBarTransitions and
              PhoneStatusBar (DISABLE_NOTIFICATION_ICONS). -->
         <com.android.systemui.statusbar.AlphaOptimizedFrameLayout
@@ -77,6 +128,27 @@
 
             </com.android.systemui.statusbar.CMStatusBarItemHolder>
 
+            <com.android.systemui.crdroid.statusbarweather.StatusBarWeatherImage
+                android:id="@+id/weather_image"
+                android:layout_width="24dp"
+                android:layout_height="match_parent"
+                android:paddingStart="1dip"
+                android:paddingEnd="2dip"
+                android:visibility="gone"
+                />
+
+            <com.android.systemui.crdroid.statusbarweather.StatusBarWeather
+                android:id="@+id/weather_temp"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:maxLines="1"
+                android:textAppearance="@style/TextAppearance.StatusBar.Expanded.Weather.Detailed"
+                android:gravity="right|center_vertical"
+                android:paddingStart="1dip"
+                android:paddingEnd="2dip"
+                android:visibility="gone"
+                />
+
             <include layout="@layout/system_icons" />
 
             <com.android.systemui.BatteryLevelTextView android:id="@+id/battery_level"
@@ -97,6 +169,16 @@
                 android:paddingEnd="@dimen/status_bar_clock_end_padding"
                 android:gravity="center_vertical|start"
                 />
+
+            <ImageView
+                android:id="@+id/crdroid_logo"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:paddingStart="1dip"
+                android:src="@drawable/ic_crdroid_logo"
+                android:scaleType="center"
+                android:visibility="gone"
+                />
         </com.android.keyguard.AlphaOptimizedLinearLayout>
     </LinearLayout>
 
@@ -105,6 +187,14 @@
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout="@layout/emergency_cryptkeeper_text"
+    />
+
+    <ViewStub
+        android:id="@+id/ticker_stub"
+        android:inflatedId="@+id/ticker"
+        android:layout="@layout/status_bar_ticker"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
     />
 
     <com.android.keyguard.AlphaOptimizedLinearLayout
@@ -125,5 +215,10 @@
             android:visibility="gone"
             />
     </com.android.keyguard.AlphaOptimizedLinearLayout>
+
+    <com.android.systemui.statusbar.policy.BatteryBarController
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        systemui:viewLocation="1" />
 
 </com.android.systemui.statusbar.phone.PhoneStatusBarView>

@@ -388,7 +388,7 @@ class MountService extends IMountService.Stub
 
     private boolean shouldBenchmark() {
         final long benchInterval = Settings.Global.getLong(mContext.getContentResolver(),
-                Settings.Global.STORAGE_BENCHMARK_INTERVAL, DateUtils.WEEK_IN_MILLIS);
+                Settings.Global.STORAGE_BENCHMARK_INTERVAL, -1);
         if (benchInterval == -1) {
             return false;
         } else if (benchInterval == 0) {
@@ -1301,7 +1301,9 @@ class MountService extends IMountService.Stub
 
             // Adoptable public disks are visible to apps, since they meet
             // public API requirement of being in a stable location.
-            if (vol.disk.isAdoptable()) {
+            // If FBE is enabled, sdcard is no longer considered adoptable,
+            // make sdcard visible.
+            if (vol.disk.isAdoptable() || vol.disk.isSd()) {
                 vol.mountFlags |= VolumeInfo.MOUNT_FLAG_VISIBLE;
             }
 

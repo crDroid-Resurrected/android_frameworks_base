@@ -268,11 +268,8 @@ class DisplayContent {
             }
             mHomeStack = stack;
         }
-        if (onTop) {
-            mStacks.add(stack);
-        } else {
-            mStacks.add(0, stack);
-        }
+        mStacks.add(0, stack);
+        moveStack(stack, onTop);
         layoutNeeded = true;
     }
 
@@ -285,6 +282,10 @@ class DisplayContent {
 
         if (!mStacks.remove(stack)) {
             Slog.wtf(TAG_WM, "moving stack that was not added: " + stack, new Throwable());
+            if (stack.mRemoved) {
+                Slog.w(TAG_WM, "stack is already removed, just return is OK");
+                return;
+            }
         }
 
         int addIndex = toTop ? mStacks.size() : 0;
@@ -306,6 +307,7 @@ class DisplayContent {
     void detachStack(TaskStack stack) {
         mDimLayerController.removeDimLayerUser(stack);
         mStacks.remove(stack);
+        stack.mRemoved = true;
     }
 
     /**

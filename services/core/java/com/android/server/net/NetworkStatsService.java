@@ -345,9 +345,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mUidRecorder = buildRecorder(PREFIX_UID, mSettings.getUidConfig(), false);
         mUidTagRecorder = buildRecorder(PREFIX_UID_TAG, mSettings.getUidTagConfig(), true);
 
-        updatePersistThresholds();
-
         synchronized (mStatsLock) {
+            updatePersistThresholds();
             // upgrade any legacy stats, migrating them to rotated files
             maybeUpgradeLegacyStatsLocked();
 
@@ -369,7 +368,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
         // listen for uid removal to clean stats
         final IntentFilter removedFilter = new IntentFilter(ACTION_UID_REMOVED);
-        mContext.registerReceiver(mRemovedReceiver, removedFilter, null, mHandler);
+        mContext.registerReceiverAsUser(mRemovedReceiver, UserHandle.ALL, removedFilter, null, mHandler);
 
         // listen for user changes to clean stats
         final IntentFilter userFilter = new IntentFilter(ACTION_USER_REMOVED);
@@ -402,6 +401,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mContext.unregisterReceiver(mTetherReceiver);
         mContext.unregisterReceiver(mPollReceiver);
         mContext.unregisterReceiver(mRemovedReceiver);
+        mContext.unregisterReceiver(mUserReceiver);
         mContext.unregisterReceiver(mShutdownReceiver);
 
         final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
@@ -1112,21 +1112,36 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
     }
 
-    private void performPoll(int flags) {
-        // try refreshing time source when stale
-        if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
-            mTime.forceRefresh();
+    class PerformPollAsyncThread extends Thread {
+        private int mflags;
+        public PerformPollAsyncThread(String name, int flags) {
+            super(name);
+            this.mflags = flags;
         }
+        public void run() {
+            if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
+                mTime.forceRefresh();
+            }
 
-        synchronized (mStatsLock) {
-            mWakeLock.acquire();
+            synchronized (mStatsLock) {
+                mWakeLock.acquire();
 
-            try {
-                performPollLocked(flags);
-            } finally {
-                mWakeLock.release();
+                try {
+                    performPollLocked(mflags);
+                } finally {
+                    mWakeLock.release();
+                }
             }
         }
+    }
+
+    private void performPoll(int flags) {
+        /**
+         * Use async thread for it since this BroadcastReceiver process may cost 20 second.
+         * That Will delay other ordered BroadcastReceiver process.
+         */
+        PerformPollAsyncThread thr = new PerformPollAsyncThread("PerformPoll Async Thread", flags);
+        thr.start();
     }
 
     /**

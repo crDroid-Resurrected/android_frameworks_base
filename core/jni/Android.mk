@@ -9,19 +9,12 @@ LOCAL_CFLAGS += -Wno-non-virtual-dtor
 LOCAL_CFLAGS += -Wno-maybe-uninitialized -Wno-parentheses
 LOCAL_CFLAGS += -DHWUI_NEW_OPS
 LOCAL_CPPFLAGS += -Wno-conversion-null
+LOCAL_CFLAGS += -fno-strict-aliasing
 
 ifeq ($(TARGET_ARCH), arm)
     LOCAL_CFLAGS += -DPACKED="__attribute__ ((packed))"
 else
     LOCAL_CFLAGS += -DPACKED=""
-endif
-
-ifneq ($(ENABLE_CPUSETS),)
-    LOCAL_CFLAGS += -DENABLE_CPUSETS
-endif
-
-ifneq ($(ENABLE_SCHED_BOOST),)
-    LOCAL_CFLAGS += -DENABLE_SCHED_BOOST
 endif
 
 LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -DEGL_EGLEXT_PROTOTYPES
@@ -284,10 +277,7 @@ LOCAL_CFLAGS += -Wall -Werror -Wno-error=deprecated-declarations -Wunused -Wunre
 # -Wno-c++11-extensions: Clang warns about Skia using the C++11 override keyword, but this project
 #                        is not being compiled with that level. Remove once this has changed.
 LOCAL_CLANG_CFLAGS += -Wno-c++11-extensions
-
-# b/22414716: thread_local (android/graphics/Paint.cpp) and Clang don't like each other at the
-#             moment.
-LOCAL_CLANG := false
+LOCAL_SDCLANG_LTO := true
 
 include $(BUILD_SHARED_LIBRARY)
 

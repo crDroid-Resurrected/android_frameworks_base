@@ -76,6 +76,7 @@ static jmethodID method_sessionEnded;
 static jfieldID field_context;
 static jfieldID field_batteryLevel;
 static jfieldID field_batteryScale;
+static jfieldID field_deviceType;
 
 // MtpPropertyList fields
 static jfieldID field_mCount;
@@ -719,6 +720,24 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
             int type = dataTypes[i];
             packet.putUInt16(type);
 
+            if (type == MTP_TYPE_STR) {
+                jstring value = (jstring)env->GetObjectArrayElement(stringValuesArray, i);
+                const char *valueStr = (value ? env->GetStringUTFChars(value, NULL) : NULL);
+                if (valueStr) {
+                    packet.putString(valueStr);
+                    env->ReleaseStringUTFChars(value, valueStr);
+                } else {
+                    packet.putEmptyString();
+                }
+                env->DeleteLocalRef(value);
+                continue;
+            }
+
+            if (!longValues) {
+                ALOGE("bad longValuesArray value in MyMtpDatabase::getObjectPropertyList");
+                continue;
+            }
+
             switch (type) {
                 case MTP_TYPE_INT8:
                     packet.putInt8(longValues[i]);
@@ -750,18 +769,6 @@ MtpResponseCode MyMtpDatabase::getObjectPropertyList(MtpObjectHandle handle,
                 case MTP_TYPE_UINT128:
                     packet.putUInt128(longValues[i]);
                     break;
-                case MTP_TYPE_STR: {
-                    jstring value = (jstring)env->GetObjectArrayElement(stringValuesArray, i);
-                    const char *valueStr = (value ? env->GetStringUTFChars(value, NULL) : NULL);
-                    if (valueStr) {
-                        packet.putString(valueStr);
-                        env->ReleaseStringUTFChars(value, valueStr);
-                    } else {
-                        packet.putEmptyString();
-                    }
-                    env->DeleteLocalRef(value);
-                    break;
-                }
                 default:
                     ALOGE("bad or unsupported data type in MyMtpDatabase::getObjectPropertyList");
                     break;
@@ -1031,6 +1038,7 @@ static const PropertyTableEntry   kDevicePropertyTable[] = {
     {   MTP_DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME,       MTP_TYPE_STR },
     {   MTP_DEVICE_PROPERTY_IMAGE_SIZE,                 MTP_TYPE_STR },
     {   MTP_DEVICE_PROPERTY_BATTERY_LEVEL,              MTP_TYPE_UINT8 },
+    {   MTP_DEVICE_PROPERTY_PERCEIVED_DEVICE_TYPE,      MTP_TYPE_UINT32 },
 };
 
 bool MyMtpDatabase::getObjectPropertyInfo(MtpObjectProperty property, int& type) {
@@ -1210,6 +1218,10 @@ MtpProperty* MyMtpDatabase::getDevicePropertyDesc(MtpDeviceProperty property) {
             result->setFormRange(0, env->GetIntField(mDatabase, field_batteryScale), 1);
             result->mCurrentValue.u.u8 = (uint8_t)env->GetIntField(mDatabase, field_batteryLevel);
             break;
+        case MTP_DEVICE_PROPERTY_PERCEIVED_DEVICE_TYPE:
+            result = new MtpProperty(property, MTP_TYPE_UINT32);
+            result->mCurrentValue.u.u32 = (uint32_t)env->GetIntField(mDatabase, field_deviceType);
+            break;
     }
 
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
@@ -1387,6 +1399,11 @@ int register_android_mtp_MtpDatabase(JNIEnv *env)
     field_batteryScale = env->GetFieldID(clazz, "mBatteryScale", "I");
     if (field_batteryScale == NULL) {
         ALOGE("Can't find MtpDatabase.mBatteryScale");
+        return -1;
+    }
+    field_deviceType = env->GetFieldID(clazz, "mDeviceType", "I");
+    if (field_deviceType == NULL) {
+        ALOGE("Can't find MtpDatabase.mDeviceType");
         return -1;
     }
 

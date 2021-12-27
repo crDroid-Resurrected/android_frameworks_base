@@ -1816,7 +1816,7 @@ final class ActivityStack {
                     // them. However, when they don't have the wallpaper behind them, we want to
                     // show activities in the next application stack behind them vs. another
                     // task in the home stack like recents.
-                    behindFullscreenActivity = true;
+                    behindFullscreenActivity = task.getTopActivity() != null;
                 } else if (task.isRecentsTask()
                         && task.getTaskToReturnTo() == APPLICATION_ACTIVITY_TYPE) {
                     if (DEBUG_VISIBILITY) Slog.v(TAG_VISIBILITY,
@@ -2612,7 +2612,7 @@ final class ActivityStack {
             final int numTasks = mTaskHistory.size();
             for (int i = index + 1; i < numTasks; ++i) {
                 TaskRecord task = mTaskHistory.get(i);
-                if (task.userId == targetTask.userId) {
+                if (task.userId == targetTask.userId && task.mActivities.size() > 0) {
                     return task;
                 }
             }
@@ -3274,7 +3274,23 @@ final class ActivityStack {
                 return;
             } else {
                 final TaskRecord task = r.task;
-                if (r.frontOfTask && task == topTask() && task.isOverHomeStack()) {
+                boolean adjust = false;
+                if ((next == null || next.task != task) && r.frontOfTask) {
+                    if (task.isOverHomeStack() && task == topTask()) {
+                        adjust = true;
+                    } else {
+                        for (int taskNdx = mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+                            final TaskRecord tr = mTaskHistory.get(taskNdx);
+                            if (tr.getTopActivity() != null) {
+                                break;
+                            } else if (tr.isOverHomeStack()) {
+                                adjust = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (adjust) {
                     final int taskToReturnTo = task.getTaskToReturnTo();
 
                     // For non-fullscreen stack, we want to move the focus to the next visible
@@ -3416,9 +3432,10 @@ final class ActivityStack {
         }
         Slog.w(TAG, "  Force finishing activity "
                 + r.intent.getComponent().flattenToShortString());
-        int taskNdx = mTaskHistory.indexOf(r.task);
         int activityNdx = r.task.mActivities.indexOf(r);
         finishActivityLocked(r, Activity.RESULT_CANCELED, null, reason, false);
+        // taskNdx may change after finishActivityLocked call
+        int taskNdx = mTaskHistory.indexOf(r.task);
         finishedTask = r.task;
         // Also terminate any activities below it that aren't yet
         // stopped, to avoid a situation where one will get
@@ -3593,9 +3610,7 @@ final class ActivityStack {
             // it is done pausing; else we can just directly finish it here.
             if (DEBUG_PAUSE) Slog.v(TAG_PAUSE, "Finish not pausing: " + r);
             if (r.visible) {
-                mWindowManager.prepareAppTransition(transit, false);
                 mWindowManager.setAppVisibility(r.appToken, false);
-                mWindowManager.executeAppTransition();
                 if (!mStackSupervisor.mWaitingVisibleActivities.contains(r)) {
                     mStackSupervisor.mWaitingVisibleActivities.add(r);
                 }
@@ -4259,7 +4274,7 @@ final class ActivityStack {
                         hasVisibleActivities = true;
                     }
                     final boolean remove;
-                    if ((!r.haveState && !r.stateNotNeeded) || r.finishing) {
+                    if ((!r.haveState && !r.stateNotNeeded) || r.finishing || app.removed) {
                         // Don't currently have state for the activity, or
                         // it is finishing -- always remove it.
                         remove = true;
@@ -4493,6 +4508,21 @@ final class ActivityStack {
                 prevIsHome = true;
             }
         }
+
+        //Check if over home stack there are any tasks with activities that are not finishing.
+        if (!prevIsHome) {
+            int indexOf = mTaskHistory.indexOf(tr);
+            for (int i = indexOf - 1; i >= 0; i--) {
+                TaskRecord taskRecord = mTaskHistory.get(i);
+                if (taskRecord.isOverHomeStack()) {
+                    if (taskRecord.topRunningActivityLocked() == null) {
+                        prevIsHome = true;
+                    }
+                    break;
+                }
+            }
+        }
+
         mTaskHistory.remove(tr);
         mTaskHistory.add(0, tr);
         updateTaskMovement(tr, false);
@@ -4502,7 +4532,7 @@ final class ActivityStack {
         int numTasks = mTaskHistory.size();
         for (int taskNdx = numTasks - 1; taskNdx >= 1; --taskNdx) {
             final TaskRecord task = mTaskHistory.get(taskNdx);
-            if (task.isOverHomeStack()) {
+            if (task.isOverHomeStack() && task.mActivities != null && task.mActivities.size() > 0) {
                 break;
             }
             if (taskNdx == 1) {
@@ -4595,6 +4625,15 @@ final class ActivityStack {
         if (mConfigWillChange) {
             if (DEBUG_SWITCH || DEBUG_CONFIGURATION) Slog.v(TAG_CONFIGURATION,
                     "Skipping config check (will change): " + r);
+            return true;
+        }
+
+        // TODO: We could probably make the condition below just check that the activity state is
+        // stopped, but also checking the sleep state for now to reduce change impact late in
+        // development cycle.
+        if (mService.isSleepingOrShuttingDownLocked() && r.state == ActivityState.STOPPED) {
+            if (DEBUG_SWITCH || DEBUG_CONFIGURATION) Slog.v(TAG_CONFIGURATION,
+                    "Skipping config check (stopped while sleeping): " + r);
             return true;
         }
 

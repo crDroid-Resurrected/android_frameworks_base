@@ -205,6 +205,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
 import static android.view.WindowManager.LayoutParams.TYPE_PRIVATE_PRESENTATION;
 import static android.view.WindowManager.LayoutParams.TYPE_QS_DIALOG;
+import static android.view.WindowManager.LayoutParams.TYPE_SLIM_RECENTS;
 import static android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR;
 import static android.view.WindowManager.LayoutParams.TYPE_TOAST;
 import static android.view.WindowManager.LayoutParams.TYPE_VOICE_INTERACTION;
@@ -541,6 +542,7 @@ public class WindowManagerService extends IWindowManager.Stub
 
     boolean mDisplayReady;
     boolean mSafeMode;
+    boolean mDisableOverlays;
     boolean mDisplayEnabled = false;
     boolean mSystemBooted = false;
     boolean mForceDisplayEnabled = false;
@@ -679,9 +681,14 @@ public class WindowManagerService extends IWindowManager.Stub
         private final Uri mAnimationDurationScaleUri =
                 Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE);
 
+        private final Uri mDisableAnimationsUri =
+                Settings.System.getUriFor(Settings.System.DISABLE_TRANSITION_ANIMATIONS);
+
         public SettingsObserver() {
             super(new Handler());
             ContentResolver resolver = mContext.getContentResolver();
+            resolver.registerContentObserver(mDisableAnimationsUri, false, this,
+                    UserHandle.USER_ALL);
             resolver.registerContentObserver(mDisplayInversionEnabledUri, false, this,
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mWindowAnimationScaleUri, false, this,
@@ -700,6 +707,8 @@ public class WindowManagerService extends IWindowManager.Stub
 
             if (mDisplayInversionEnabledUri.equals(uri)) {
                 updateCircularDisplayMaskIfNeeded();
+            } else if (mDisableAnimationsUri.equals(uri))  {
+                updateAnimationsDisabledSetting(getAnimationsDisabledByUser());
             } else {
                 @UpdateAnimationScaleMode
                 final int mode;
@@ -730,9 +739,9 @@ public class WindowManagerService extends IWindowManager.Stub
     PowerManager mPowerManager;
     PowerManagerInternal mPowerManagerInternal;
 
-    float mWindowAnimationScaleSetting = 1.0f;
-    float mTransitionAnimationScaleSetting = 1.0f;
-    float mAnimatorDurationScaleSetting = 1.0f;
+    float mWindowAnimationScaleSetting = 0.6f;
+    float mTransitionAnimationScaleSetting = 0.6f;
+    float mAnimatorDurationScaleSetting = 0.6f;
     boolean mAnimationsDisabled = false;
 
     final InputManagerService mInputManager;
@@ -961,6 +970,23 @@ public class WindowManagerService extends IWindowManager.Stub
         }, 0);
     }
 
+    private void updateAnimationsDisabledSetting(boolean enabled) {
+        synchronized (mWindowMap) {
+            if (mAnimationsDisabled != enabled) {
+                mAnimationsDisabled = enabled;
+                dispatchNewAnimatorScaleLocked(null);
+            }
+        }
+    }
+
+    private boolean getAnimationsDisabledByUser() {
+        return Settings.System.getIntForUser(
+                mContext.getContentResolver(),
+                Settings.System.DISABLE_TRANSITION_ANIMATIONS,
+                0,
+                mCurrentUserId) == 1;
+    }
+
     private WindowManagerService(Context context, InputManagerService inputManager,
             boolean haveInputMethods, boolean showBootMsgs, boolean onlyCore) {
         mContext = context;
@@ -1005,15 +1031,10 @@ public class WindowManagerService extends IWindowManager.Stub
                 new PowerManagerInternal.LowPowerModeListener() {
             @Override
             public void onLowPowerModeChanged(boolean enabled) {
-                synchronized (mWindowMap) {
-                    if (mAnimationsDisabled != enabled && !mAllowAnimationsInLowPowerMode) {
-                        mAnimationsDisabled = enabled;
-                        dispatchNewAnimatorScaleLocked(null);
-                    }
-                }
+                updateAnimationsDisabledSetting(enabled);
             }
         });
-        mAnimationsDisabled = mPowerManagerInternal.getLowPowerModeEnabled();
+        mAnimationsDisabled = getAnimationsDisabledByUser() || mPowerManagerInternal.getLowPowerModeEnabled();
         mScreenFrozenLock = mPowerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK, "SCREEN_FROZEN");
         mScreenFrozenLock.setReferenceCounted(false);
@@ -1873,6 +1894,7 @@ public class WindowManagerService extends IWindowManager.Stub
             case TYPE_STATUS_BAR:
             case TYPE_NAVIGATION_BAR:
             case TYPE_INPUT_METHOD_DIALOG:
+            case TYPE_SLIM_RECENTS:
                 return true;
         }
         return false;
@@ -2469,6 +2491,7 @@ public class WindowManagerService extends IWindowManager.Stub
                 // animation.
                 win.mAnimatingExit = true;
                 win.mReplacingRemoveRequested = true;
+                updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES, true);
                 Binder.restoreCallingIdentity(origId);
                 return;
             }
@@ -2571,10 +2594,6 @@ public class WindowManagerService extends IWindowManager.Stub
 
         win.mRemoved = true;
 
-        if (mInputMethodTarget == win) {
-            moveInputMethodWindowsIfNeededLocked(false);
-        }
-
         if (false) {
             RuntimeException e = new RuntimeException("here");
             e.fillInStackTrace();
@@ -2588,6 +2607,10 @@ public class WindowManagerService extends IWindowManager.Stub
         }
         mPolicy.removeWindowLw(win);
         win.removeLocked();
+
+        if (mInputMethodTarget == win) {
+            moveInputMethodWindowsIfNeededLocked(false);
+        }
 
         if (DEBUG_ADD_REMOVE) Slog.v(TAG_WM, "removeWindowInnerLocked: " + win);
         mWindowMap.remove(win.mClient.asBinder());
@@ -8234,6 +8257,27 @@ public class WindowManagerService extends IWindowManager.Stub
         return mSafeMode;
     }
 
+    public boolean detectDisableOverlays() {
+        if (!mInputMonitor.waitForInputDevicesReady(
+                INPUT_DEVICES_READY_FOR_SAFE_MODE_DETECTION_TIMEOUT_MILLIS)) {
+            Slog.w(TAG_WM, "Devices still not ready after waiting "
+                   + INPUT_DEVICES_READY_FOR_SAFE_MODE_DETECTION_TIMEOUT_MILLIS
+                   + " milliseconds before attempting to detect safe mode.");
+        }
+
+        int volumeUpState = mInputManager.getKeyCodeState(-1, InputDevice.SOURCE_ANY,
+                KeyEvent.KEYCODE_VOLUME_UP);
+        mDisableOverlays = volumeUpState > 0;
+
+        if (mDisableOverlays) {
+            Log.i(TAG_WM, "All enabled theme overlays will now be disabled.");
+        } else {
+            Log.i(TAG_WM, "System will boot with enabled overlays intact.");
+        }
+
+        return mDisableOverlays;
+    }
+
     public void displayReady() {
         for (Display display : mDisplays) {
             displayReady(display.getDisplayId());
@@ -10491,13 +10535,13 @@ public class WindowManagerService extends IWindowManager.Stub
     }
 
     @Override
-    public boolean hasNavigationBar() {
-        return mPolicy.hasNavigationBar();
-    }
-
-    @Override 
     public boolean needsNavigationBar() {
         return mPolicy.needsNavigationBar();
+    }
+
+    @Override
+    public boolean hasNavigationBar() {
+        return mPolicy.hasNavigationBar();
     }
 
     @Override

@@ -21,6 +21,7 @@ import cyanogenmod.power.PerformanceManagerInternal;
 import android.Manifest;
 import android.annotation.IntDef;
 import android.app.ActivityManager;
+import android.app.AppOpsManager;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -54,6 +55,7 @@ import android.os.SystemProperties;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.os.WorkSource;
+import android.pocket.PocketManager;
 import android.provider.Settings;
 import android.provider.Settings.Secure;
 import android.provider.Settings.SettingNotFoundException;
@@ -73,6 +75,7 @@ import com.android.internal.app.IAppOpsService;
 import com.android.internal.app.IBatteryStats;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.ArrayUtils;
+import com.android.internal.utils.du.DUActionUtils;
 import com.android.server.EventLogTags;
 import com.android.server.LocalServices;
 import com.android.server.ServiceThread;
@@ -527,6 +530,9 @@ public final class PowerManagerService extends SystemService
     // True if we are currently in light device idle mode.
     private boolean mLightDeviceIdleMode;
 
+    // overrule and disable brightness for buttons
+    private boolean mHardwareKeysDisable = false;
+
     // Set of app ids that we will always respect the wake locks for.
     int[] mDeviceIdleWhitelist = new int[0];
 
@@ -558,8 +564,6 @@ public final class PowerManagerService extends SystemService
     private static native void nativeSendPowerHint(int hintId, int data);
     private static native void nativeSetFeature(int featureId, int data);
     private static native int nativeGetFeature(int featureId);
-
-    private boolean mForceNavbar;
 
     private PerformanceManagerInternal mPerf;
 
@@ -682,25 +686,6 @@ public final class PowerManagerService extends SystemService
             mSensorManager = (SensorManager) mContext.getSystemService(Context.SENSOR_SERVICE);
             mProximitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
 
-            // Register for broadcasts from other components of the system.
-            IntentFilter filter = new IntentFilter();
-            filter.addAction(Intent.ACTION_BATTERY_CHANGED);
-            filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
-            mContext.registerReceiver(new BatteryReceiver(), filter, null, mHandler);
-
-            filter = new IntentFilter();
-            filter.addAction(Intent.ACTION_DREAMING_STARTED);
-            filter.addAction(Intent.ACTION_DREAMING_STOPPED);
-            mContext.registerReceiver(new DreamReceiver(), filter, null, mHandler);
-
-            filter = new IntentFilter();
-            filter.addAction(Intent.ACTION_USER_SWITCHED);
-            mContext.registerReceiver(new UserSwitchedReceiver(), filter, null, mHandler);
-
-            filter = new IntentFilter();
-            filter.addAction(Intent.ACTION_DOCK_EVENT);
-            mContext.registerReceiver(new DockReceiver(), filter, null, mHandler);
-
             // Register for settings changes.
             final ContentResolver resolver = mContext.getContentResolver();
             resolver.registerContentObserver(Settings.Secure.getUriFor(
@@ -767,11 +752,14 @@ public final class PowerManagerService extends SystemService
             resolver.registerContentObserver(CMSettings.Global.getUriFor(
                     CMSettings.Global.WAKE_WHEN_PLUGGED_OR_UNPLUGGED),
                     false, mSettingsObserver, UserHandle.USER_ALL);
-            resolver.registerContentObserver(CMSettings.Global.getUriFor(
-                    CMSettings.Global.DEV_FORCE_SHOW_NAVBAR),
+            resolver.registerContentObserver(Settings.Secure.getUriFor(
+                    Settings.Secure.NAVIGATION_BAR_VISIBLE),
                     false, mSettingsObserver, UserHandle.USER_ALL);
             resolver.registerContentObserver(CMSettings.System.getUriFor(
                     CMSettings.System.PROXIMITY_ON_WAKE),
+                    false, mSettingsObserver, UserHandle.USER_ALL);
+            resolver.registerContentObserver(Settings.Secure.getUriFor(
+                    Settings.Secure.HARDWARE_KEYS_DISABLE),
                     false, mSettingsObserver, UserHandle.USER_ALL);
 
             // Go.
@@ -780,6 +768,25 @@ public final class PowerManagerService extends SystemService
             mDirty |= DIRTY_BATTERY_STATE;
             updatePowerStateLocked();
         }
+
+        // Register for broadcasts from other components of the system.
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+        filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+        mContext.registerReceiver(new BatteryReceiver(), filter, null, mHandler);
+
+        filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_DREAMING_STARTED);
+        filter.addAction(Intent.ACTION_DREAMING_STOPPED);
+        mContext.registerReceiver(new DreamReceiver(), filter, null, mHandler);
+
+        filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_USER_SWITCHED);
+        mContext.registerReceiver(new UserSwitchedReceiver(), filter, null, mHandler);
+
+        filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_DOCK_EVENT);
+        mContext.registerReceiver(new DockReceiver(), filter, null, mHandler);
     }
 
     private void readConfigurationLocked() {
@@ -922,12 +929,13 @@ public final class PowerManagerService extends SystemService
         mKeyboardBrightness = CMSettings.Secure.getIntForUser(resolver,
                 CMSettings.Secure.KEYBOARD_BRIGHTNESS, mKeyboardBrightnessSettingDefault,
                 UserHandle.USER_CURRENT);
-        mForceNavbar = CMSettings.Global.getIntForUser(resolver,
-                CMSettings.Global.DEV_FORCE_SHOW_NAVBAR, 0, UserHandle.USER_CURRENT) == 1;
         mProximityWakeEnabled = CMSettings.System.getInt(resolver,
                 CMSettings.System.PROXIMITY_ON_WAKE,
                 mProximityWakeEnabledByDefaultConfig ? 1 : 0) == 1;
-
+        mHardwareKeysDisable = Settings.Secure.getIntForUser(resolver,
+                Settings.Secure.HARDWARE_KEYS_DISABLE,
+                DUActionUtils.hasNavbarByDefault(mContext) ? 1 : 0,
+                UserHandle.USER_CURRENT) != 0;
         mDirty |= DIRTY_SETTINGS;
     }
 
@@ -1859,6 +1867,8 @@ public final class PowerManagerService extends SystemService
                 final int screenOffTimeout = getScreenOffTimeoutLocked(sleepTimeout);
                 final int screenDimDuration = getScreenDimDurationLocked(screenOffTimeout);
                 final boolean userInactiveOverride = mUserInactiveOverrideFromWindowManager;
+                final PocketManager pocketManager = (PocketManager) mContext.getSystemService(Context.POCKET_SERVICE);
+                final boolean isDeviceInPocket = pocketManager != null && pocketManager.isDeviceInPocket();
 
                 mUserActivitySummary = 0;
                 if (mLastUserActivityTime >= mLastWakeTime) {
@@ -1868,15 +1878,14 @@ public final class PowerManagerService extends SystemService
                         mUserActivitySummary = USER_ACTIVITY_SCREEN_BRIGHT;
                         if (mWakefulness == WAKEFULNESS_AWAKE) {
                             int buttonBrightness, keyboardBrightness;
-                            if (mButtonBrightnessOverrideFromWindowManager >= 0) {
+                            if (mHardwareKeysDisable) {
+                                buttonBrightness = 0;
+                                keyboardBrightness = 0;
+                            } else if (mButtonBrightnessOverrideFromWindowManager >= 0) {
                                 buttonBrightness = mButtonBrightnessOverrideFromWindowManager;
                                 keyboardBrightness = mButtonBrightnessOverrideFromWindowManager;
                             } else {
-                                if (!mForceNavbar) {
-                                    buttonBrightness = mButtonBrightness;
-                                } else {
-                                    buttonBrightness = 0;
-                                }
+                                buttonBrightness = mButtonBrightness;
                                 keyboardBrightness = mKeyboardBrightness;
                             }
 
@@ -1890,7 +1899,7 @@ public final class PowerManagerService extends SystemService
                                 mButtonOn = false;
                             } else {
                                 if ((!mButtonLightOnKeypressOnly || mButtonPressed) &&
-                                        !mProximityPositive) {
+                                        !mProximityPositive && !isDeviceInPocket) {
                                     mButtonsLight.setBrightness(buttonBrightness);
                                     mButtonPressed = false;
                                     if (buttonBrightness != 0 && mButtonTimeout != 0) {
@@ -3579,6 +3588,20 @@ public final class PowerManagerService extends SystemService
 
             final int uid = Binder.getCallingUid();
             final int pid = Binder.getCallingPid();
+
+            try {
+                if (mAppOps != null &&
+                        mAppOps.checkOperation(AppOpsManager.OP_WAKE_LOCK, uid, packageName)
+                        != AppOpsManager.MODE_ALLOWED) {
+                    Slog.d(TAG, "acquireWakeLock: ignoring request from " + packageName);
+                    // For (ignore) accounting purposes
+                    mAppOps.noteOperation(AppOpsManager.OP_WAKE_LOCK, uid, packageName);
+                    // silent return
+                    return;
+                }
+            } catch (RemoteException e) {
+            }
+
             final long ident = Binder.clearCallingIdentity();
             try {
                 acquireWakeLockInternal(lock, flags, tag, packageName, ws, historyTag, uid, pid);

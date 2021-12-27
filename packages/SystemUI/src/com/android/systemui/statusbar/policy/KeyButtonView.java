@@ -62,10 +62,16 @@ public class KeyButtonView extends ImageView implements ButtonDispatcher.ButtonI
     private int mCode;
     private int mTouchSlop;
     private boolean mSupportsLongpress = true;
-    private AudioManager mAudioManager;
     private boolean mGestureAborted;
     private boolean mLongClicked;
     private OnClickListener mOnClickListener;
+
+    static AudioManager mAudioManager;
+    static AudioManager getAudioManager(Context context) {
+		if (mAudioManager == null)
+		    mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+		return mAudioManager;
+	}
 
     private PerformanceManager mPerf;
 
@@ -116,7 +122,7 @@ public class KeyButtonView extends ImageView implements ButtonDispatcher.ButtonI
 
         setClickable(true);
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
-        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        mAudioManager = getAudioManager(context);
         setBackground(new KeyButtonRipple(context, this));
         mPerf = PerformanceManager.getInstance(context);
     }
@@ -281,7 +287,7 @@ public class KeyButtonView extends ImageView implements ButtonDispatcher.ButtonI
         final KeyEvent ev = new KeyEvent(mDownTime, when, action, mCode, repeatCount,
                 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 flags,
-                InputDevice.SOURCE_KEYBOARD);
+                InputDevice.SOURCE_NAVIGATION_BAR);
         InputManager.getInstance().injectInputEvent(ev,
                 InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
     }

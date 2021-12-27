@@ -22,17 +22,21 @@ import android.annotation.NonNull;
 import android.annotation.SuppressLint;
 import android.app.Dialog;
 import android.app.KeyguardManager;
+import android.app.ThemeManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.drawable.AnimatedVectorDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
 import android.media.AudioSystem;
 import android.os.Debug;
@@ -119,8 +123,9 @@ public class VolumeDialog implements TunerService.Tunable {
     private ZenFooter mZenFooter;
     private final Object mSafetyWarningLock = new Object();
     private final Accessibility mAccessibility = new Accessibility();
-    private final ColorStateList mActiveSliderTint;
-    private final ColorStateList mInactiveSliderTint;
+    private ColorStateList mActiveSliderTint;
+    private ColorStateList mInactiveSliderTint;
+    private ColorStateList mInactiveSliderTintColorEngine;
     private VolumeDialogMotion mMotion;
     private final int mWindowType;
     private final ZenModeController mZenModeController;
@@ -145,6 +150,17 @@ public class VolumeDialog implements TunerService.Tunable {
     private boolean mShowFullZen;
     private TunerZenModePanel mZenPanel;
 
+    // Volume dialog alpha
+    private int mVolumeDialogAlpha;
+
+    // Volume dialog stroke
+    private int mVolumeDialogStroke;
+    private int mCustomStrokeColor;
+    private int mCustomStrokeThickness;
+    private int mCustomCornerRadius;
+    private int mCustomDashWidth;
+    private int mCustomDashGap;
+
     public VolumeDialog(Context context, int windowType, VolumeDialogController controller,
                         ZenModeController zenModeController, Callback callback) {
         mContext = context;
@@ -158,6 +174,7 @@ public class VolumeDialog implements TunerService.Tunable {
                 (AccessibilityManager) mContext.getSystemService(Context.ACCESSIBILITY_SERVICE);
         mActiveSliderTint = ColorStateList.valueOf(Utils.getColorAccent(mContext));
         mInactiveSliderTint = loadColorStateList(R.color.volume_slider_inactive);
+        mInactiveSliderTintColorEngine = ColorStateList.valueOf(Utils.getColorAccent(mContext));
 
         initDialog();
 
@@ -263,6 +280,22 @@ public class VolumeDialog implements TunerService.Tunable {
         mZenPanel = (TunerZenModePanel) mDialog.findViewById(R.id.tuner_zen_mode_panel);
         mZenPanel.init(mZenModeController);
         mZenPanel.setCallback(mZenPanelCallback);
+
+        updateDialog();
+    }
+
+    protected void updateDialog() {
+        final TypedArray ta = mContext.obtainStyledAttributes(new int[] {
+                android.R.attr.colorPrimary,
+                android.R.attr.colorAccent
+        });
+        TextView endText = (TextView) mDialog.findViewById(R.id.volume_zen_end_now);
+        mDialog.dismiss();
+        mDialogView.setBackgroundColor(ta.getColor(0, 0));
+        mActiveSliderTint = ColorStateList.valueOf(Utils.getColorAccent(mContext));
+        mInactiveSliderTintColorEngine = ColorStateList.valueOf(Utils.getColorAccent(mContext));
+        endText.setTextColor(ta.getColor(1, 0));
+        ta.recycle();
     }
 
     @Override
@@ -387,6 +420,8 @@ public class VolumeDialog implements TunerService.Tunable {
         row.header.setId(20 * row.stream);
         mSpTexts.add(row.header);
         row.slider = (SeekBar) row.view.findViewById(R.id.volume_row_slider);
+        row.slider.setProgressTintMode(PorterDuff.Mode.SRC_ATOP);
+        row.slider.setThumbTintMode(PorterDuff.Mode.SRC_ATOP);
         row.slider.setOnSeekBarChangeListener(new VolumeSeekBarChangeListener(row));
         row.anim = null;
         row.cachedShowHeaders = VolumePrefs.DEFAULT_SHOW_HEADERS;
@@ -485,9 +520,9 @@ public class VolumeDialog implements TunerService.Tunable {
         if (mAccessibility.mFeedbackEnabled) return 20000;
         if (mHovering) return 16000;
         if (mSafetyWarning != null) return 5000;
-        if (mExpanded || mExpandButtonAnimationRunning) return 5000;
+        if (mExpanded || mExpandButtonAnimationRunning) return 1500;
         if (mActiveStream == AudioManager.STREAM_MUSIC) return 1500;
-        return 3000;
+        return 1500;
     }
 
     protected void dismissH(int reason) {
@@ -636,6 +671,8 @@ public class VolumeDialog implements TunerService.Tunable {
 
     private void updateRowsH(final VolumeRow activeRow) {
         if (D.BUG) Log.d(TAG, "updateRowsH");
+        setVolumeStroke();
+        setVolumeAlpha();
         if (!mShowing) {
             trimObsoleteH();
         }
@@ -776,7 +813,8 @@ public class VolumeDialog implements TunerService.Tunable {
 
         // update slider max
         final int max = ss.levelMax * 100;
-        if (max != row.slider.getMax()) {
+        final boolean maxChanged = max != row.slider.getMax();
+        if (maxChanged) {
             row.slider.setMax(max);
         }
 
@@ -849,12 +887,11 @@ public class VolumeDialog implements TunerService.Tunable {
         final boolean enableSlider = !zenMuted;
         final int vlevel = row.ss.muted && (isRingVibrate || !isRingStream && !zenMuted) ? 0
                 : row.ss.level;
-        updateVolumeRowSliderH(row, enableSlider, vlevel);
+        updateVolumeRowSliderH(row, enableSlider, vlevel, maxChanged);
     }
 
     private void updateVolumeRowHeaderVisibleH(VolumeRow row) {
-        final boolean dynamic = row.ss != null && row.ss.dynamic;
-        final boolean showHeaders = mExpanded && (mShowHeaders || dynamic);
+        final boolean showHeaders = mExpanded && mShowHeaders;
         if (row.cachedShowHeaders != showHeaders) {
             row.cachedShowHeaders = showHeaders;
             Util.setVisOrGone(row.header, showHeaders);
@@ -866,14 +903,16 @@ public class VolumeDialog implements TunerService.Tunable {
             row.slider.requestFocus();
         }
         final ColorStateList tint = isActive && row.slider.isEnabled() ? mActiveSliderTint
-                : mInactiveSliderTint;
+                : (ThemeManager.isOverlayEnabled()
+                        ? mInactiveSliderTint
+                        : mInactiveSliderTintColorEngine);
         if (tint == row.cachedSliderTint) return;
         row.cachedSliderTint = tint;
         row.slider.setProgressTintList(tint);
         row.slider.setThumbTintList(tint);
     }
 
-    private void updateVolumeRowSliderH(VolumeRow row, boolean enable, int vlevel) {
+    private void updateVolumeRowSliderH(VolumeRow row, boolean enable, int vlevel, boolean maxChanged) {
         row.slider.setEnabled(enable);
         updateVolumeRowSliderTintH(row, row.stream == mActiveStream);
         if (row.tracking) {
@@ -897,7 +936,7 @@ public class VolumeDialog implements TunerService.Tunable {
             }
         }
         final int newProgress = vlevel * 100;
-        if (progress != newProgress) {
+        if (progress != newProgress || maxChanged) {
             if (mShowing && rowVisible) {
                 // animate!
                 if (row.anim != null && row.anim.isRunning()
@@ -1280,5 +1319,48 @@ public class VolumeDialog implements TunerService.Tunable {
     public interface Callback {
         void onZenSettingsClicked();
         void onZenPrioritySettingsClicked();
+    }
+
+    private void setVolumeAlpha() {
+        mVolumeDialogAlpha = Settings.System.getInt(mContext.getContentResolver(),
+                   Settings.System.TRANSPARENT_VOLUME_DIALOG, 255);
+        if (mDialogView != null) {
+            mDialogView.getBackground().setAlpha(mVolumeDialogAlpha);
+        }
+    }
+
+    public void setVolumeStroke () {
+        mVolumeDialogStroke = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_STROKE, 0);
+        mCustomStrokeColor = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_STROKE_COLOR, mContext.getResources().getColor(R.color.system_accent_color));
+        mCustomStrokeThickness = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_STROKE_THICKNESS, 4);
+        mCustomCornerRadius = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_CORNER_RADIUS, 10);
+        mCustomDashWidth = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_STROKE_DASH_WIDTH, 0);
+        mCustomDashGap = Settings.System.getInt(mContext.getContentResolver(),
+                    Settings.System.VOLUME_DIALOG_STROKE_DASH_GAP, 10);
+        final GradientDrawable volumeDialogGd = new GradientDrawable();
+
+        if (mVolumeDialogStroke == 0) { // Disable by setting border thickness to 0
+            volumeDialogGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+            volumeDialogGd.setStroke(0, mContext.getResources().getColor(R.color.system_accent_color));
+            volumeDialogGd.setCornerRadius(mCustomCornerRadius);
+            mDialogView.setBackground(volumeDialogGd);
+        } else if (mVolumeDialogStroke == 1) { // use accent color for border
+            volumeDialogGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+            volumeDialogGd.setStroke(mCustomStrokeThickness, mContext.getResources().getColor(R.color.system_accent_color),
+                    mCustomDashWidth, mCustomDashGap);
+        } else if (mVolumeDialogStroke == 2) { // use custom border color
+            volumeDialogGd.setColor(mContext.getResources().getColor(R.color.system_primary_color));
+            volumeDialogGd.setStroke(mCustomStrokeThickness, mCustomStrokeColor, mCustomDashWidth, mCustomDashGap);
+        }
+
+        if (mVolumeDialogStroke != 0) {
+            volumeDialogGd.setCornerRadius(mCustomCornerRadius);
+            mDialogView.setBackground(volumeDialogGd);
+        }
     }
 }

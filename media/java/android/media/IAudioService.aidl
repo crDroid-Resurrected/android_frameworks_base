@@ -60,6 +60,8 @@ interface IAudioService {
 
     int getStreamMaxVolume(int streamType);
 
+    void setStreamMaxVolume(int streamType, int maxVol);
+
     int getLastAudibleStreamVolume(int streamType);
 
     void setMicrophoneMute(boolean on, String callingPackage, int userId);
@@ -175,4 +177,15 @@ interface IAudioService {
     void addMediaPlayerAndUpdateRemoteController(String packageName);
 
     void removeMediaPlayerAndUpdateRemoteController(String packageName);
+
+    /**
+     * Internal DU api to protect Pulse
+     * @hide
+     */
+    void setVisualizerLocked(boolean doLock);
+
+    /**
+     * @hide
+     */
+    boolean isVisualizerLocked(String callingPackage);
 }

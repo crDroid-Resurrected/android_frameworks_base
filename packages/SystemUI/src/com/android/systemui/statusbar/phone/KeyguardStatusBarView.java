@@ -16,10 +16,16 @@
 
 package com.android.systemui.statusbar.phone;
 
+import android.animation.Animator;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
+import android.provider.Settings;
+import android.os.UserHandle;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.View;
@@ -53,6 +59,10 @@ public class KeyguardStatusBarView extends RelativeLayout
             "cmsystem:" + CMSettings.System.STATUS_BAR_SHOW_BATTERY_PERCENT;
     private static final String STATUS_BAR_BATTERY_STYLE =
             "cmsystem:" + CMSettings.System.STATUS_BAR_BATTERY_STYLE;
+    private static final String TEXT_CHARGING_SYMBOL =
+            Settings.Secure.TEXT_CHARGING_SYMBOL;
+    private static final String STATUS_BAR_SHOW_CARRIER =
+            "system:" + Settings.System.STATUS_BAR_SHOW_CARRIER;
 
     private boolean mBatteryCharging;
     private boolean mKeyguardUserSwitcherShowing;
@@ -74,6 +84,13 @@ public class KeyguardStatusBarView extends RelativeLayout
 
     private boolean mShowBatteryText;
     private Boolean mForceBatteryText;
+
+    private int mTextChargingSymbol;
+    private int currentLevel;
+    private boolean isPlugged;
+    private boolean mHideContents;
+
+    private int mShowCarrierLabel;
 
     public KeyguardStatusBarView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -173,7 +190,7 @@ public class KeyguardStatusBarView extends RelativeLayout
             // we don't show the multi-user avatar unless there is more than 1 user on the device.
             if (mUserSwitcherController != null
                     && mUserSwitcherController.getSwitchableUserCount() > 1) {
-                mMultiUserSwitch.setVisibility(View.VISIBLE);
+                mMultiUserSwitch.setVisibility(mHideContents ? View.INVISIBLE : View.VISIBLE);
             } else {
                 mMultiUserSwitch.setVisibility(View.GONE);
             }
@@ -184,6 +201,13 @@ public class KeyguardStatusBarView extends RelativeLayout
         } else {
             mBatteryLevel.setVisibility(
                     mBatteryCharging || mShowBatteryText ? View.VISIBLE : View.GONE);
+        }
+        if (mCarrierLabel != null) {
+            if (mShowCarrierLabel == 1 || mShowCarrierLabel == 3) {
+                mCarrierLabel.setVisibility(View.VISIBLE);
+            } else {
+                mCarrierLabel.setVisibility(View.GONE);
+            }
         }
     }
 
@@ -210,7 +234,10 @@ public class KeyguardStatusBarView extends RelativeLayout
         mBatteryListening = listening;
         if (mBatteryListening) {
             TunerService.get(getContext()).addTunable(this,
-                    STATUS_BAR_SHOW_BATTERY_PERCENT, STATUS_BAR_BATTERY_STYLE);
+                    STATUS_BAR_SHOW_BATTERY_PERCENT,
+                    STATUS_BAR_BATTERY_STYLE,
+                    TEXT_CHARGING_SYMBOL,
+                    STATUS_BAR_SHOW_CARRIER);
             mBatteryController.addStateChangedCallback(this);
         } else {
             mBatteryController.removeStateChangedCallback(this);
@@ -250,8 +277,9 @@ public class KeyguardStatusBarView extends RelativeLayout
 
     @Override
     public void onBatteryLevelChanged(int level, boolean pluggedIn, boolean charging) {
-        String percentage = NumberFormat.getPercentInstance().format((double) level / 100.0);
-        mBatteryLevel.setText(percentage);
+        currentLevel = level;
+        isPlugged = pluggedIn;
+        updateChargingSymbol();
         boolean changed = mBatteryCharging != charging;
         mBatteryCharging = charging;
         if (changed) {
@@ -349,6 +377,7 @@ public class KeyguardStatusBarView extends RelativeLayout
         switch (key) {
             case STATUS_BAR_SHOW_BATTERY_PERCENT:
                 mShowBatteryText = newValue != null && Integer.parseInt(newValue) == 2;
+                updateVisibilities();
                 break;
             case STATUS_BAR_BATTERY_STYLE:
                 if (newValue != null) {
@@ -361,8 +390,116 @@ public class KeyguardStatusBarView extends RelativeLayout
                         mForceBatteryText = null;
                     }
                 }
+                updateVisibilities();
+                break;
+            case TEXT_CHARGING_SYMBOL:
+                mTextChargingSymbol =
+                        newValue == null ? 0 : Integer.parseInt(newValue);
+                updateChargingSymbol();
+                break;
+            case STATUS_BAR_SHOW_CARRIER:
+                mShowCarrierLabel =
+                        newValue == null ? 1 : Integer.parseInt(newValue);
+                updateVisibilities();
                 break;
         }
-        updateVisibilities();
+    }
+
+    private void updateChargingSymbol() {
+        if (!isPlugged) {
+            mBatteryLevel.setText(NumberFormat.getPercentInstance().format((double) currentLevel / 100.0));
+        } else {
+            switch (mTextChargingSymbol) {
+                case 1:
+                    mBatteryLevel.setText("⚡️" + NumberFormat.getPercentInstance().format((double) currentLevel / 100.0));
+                    break;
+                case 2:
+                    mBatteryLevel.setText("~" + NumberFormat.getPercentInstance().format((double) currentLevel / 100.0));
+                    break;
+                default:
+                    mBatteryLevel.setText(NumberFormat.getPercentInstance().format((double) currentLevel / 100.0));
+                    break;
+            }
+        }
+    }
+
+    public void toggleContents(boolean hideContents) {
+        boolean shouldShowContents = Settings.Secure.getIntForUser(
+                getContext().getContentResolver(), Settings.Secure.LOCK_HIDE_STATUS_BAR, 1,
+                UserHandle.USER_CURRENT) != 0;
+        if (shouldShowContents) {
+            hideContents = false;
+        }
+        if (mHideContents == hideContents) {
+            return;
+        }
+
+        mHideContents = hideContents;
+        if (mHideContents) {
+            Animator fadeAnimator1 = null;
+            if (mMultiUserSwitch.getVisibility() != View.GONE) {
+                fadeAnimator1 = ObjectAnimator.ofFloat(mMultiUserSwitch, "alpha", 1f, 0f);
+                fadeAnimator1.setDuration(500);
+                fadeAnimator1.setInterpolator(Interpolators.ALPHA_OUT);
+                fadeAnimator1.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        mMultiUserSwitch.setVisibility(View.INVISIBLE);
+                    }
+                });
+            }
+            Animator fadeAnimator2 = ObjectAnimator.ofFloat(mSystemIconsSuperContainer, "alpha", 1f, 0f);
+            fadeAnimator2.setDuration(500);
+            fadeAnimator2.setInterpolator(Interpolators.ALPHA_OUT);
+            fadeAnimator2.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    mSystemIconsSuperContainer.setVisibility(View.INVISIBLE);
+                }
+            });
+            Animator fadeAnimator3 = ObjectAnimator.ofFloat(mCarrierLabel, "alpha", 1f, 0f);
+            fadeAnimator3.setDuration(500);
+            fadeAnimator3.setInterpolator(Interpolators.ALPHA_OUT);
+            fadeAnimator3.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    mCarrierLabel.setVisibility(View.INVISIBLE);
+                }
+            });
+            AnimatorSet set = new AnimatorSet();
+            set.playTogether(fadeAnimator2, fadeAnimator3);
+            if (fadeAnimator1 != null) {
+                set.playTogether(fadeAnimator1);
+            }
+            set.start();
+        } else {
+            Animator fadeAnimator1 = null;
+            if (mMultiUserSwitch.getVisibility() != View.GONE) {
+                mMultiUserSwitch.setAlpha(0f);
+                mMultiUserSwitch.setVisibility(View.VISIBLE);
+                fadeAnimator1 = ObjectAnimator.ofFloat(mMultiUserSwitch, "alpha", 0f, 1f);
+                fadeAnimator1.setDuration(500);
+                fadeAnimator1.setInterpolator(Interpolators.ALPHA_IN);
+            }
+
+            mSystemIconsSuperContainer.setAlpha(0f);
+            mSystemIconsSuperContainer.setVisibility(View.VISIBLE);
+            Animator fadeAnimator2 = ObjectAnimator.ofFloat(mSystemIconsSuperContainer, "alpha", 0f, 1f);
+            fadeAnimator2.setDuration(500);
+            fadeAnimator2.setInterpolator(Interpolators.ALPHA_IN);
+
+            mCarrierLabel.setAlpha(0f);
+            mCarrierLabel.setVisibility(View.VISIBLE);
+            Animator fadeAnimator3 = ObjectAnimator.ofFloat(mCarrierLabel, "alpha", 0f, 1f);
+            fadeAnimator3.setDuration(500);
+            fadeAnimator3.setInterpolator(Interpolators.ALPHA_IN);
+
+            AnimatorSet set = new AnimatorSet();
+            set.playTogether(fadeAnimator2, fadeAnimator3);
+            if (fadeAnimator1 != null) {
+                set.playTogether(fadeAnimator1);
+            }
+            set.start();
+        }
     }
 }

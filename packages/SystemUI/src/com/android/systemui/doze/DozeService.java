@@ -46,15 +46,17 @@ import android.view.Display;
 import com.android.internal.hardware.AmbientDisplayConfiguration;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.MetricsProto.MetricsEvent;
+import com.android.systemui.R;
 import com.android.systemui.SystemUIApplication;
 import com.android.systemui.statusbar.phone.DozeParameters;
+import com.android.systemui.tuner.TunerService;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.Date;
 import java.util.List;
 
-public class DozeService extends DreamService {
+public class DozeService extends DreamService implements TunerService.Tunable {
     private static final String TAG = "DozeService";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
@@ -87,6 +89,17 @@ public class DozeService extends DreamService {
     private long mNotificationPulseTime;
 
     private AmbientDisplayConfiguration mConfig;
+
+    private boolean mOverwriteValue;
+    private boolean mCheckProximity;
+    private int mScreenBrightness;
+
+    private static final String DOZE_OVERWRITE_VALUE =
+            "system:" + Settings.System.DOZE_OVERWRITE_VALUE;
+    private static final String DOZE_PROXIMITY_CHECK_BEFORE_PULSE =
+            "system:" + Settings.System.DOZE_PROXIMITY_CHECK_BEFORE_PULSE;
+    private static final String DOZE_SCREEN_BRIGHTNESS =
+            "system:" + Settings.System.DOZE_SCREEN_BRIGHTNESS;
 
     public DozeService() {
         if (DEBUG) Log.d(mTag, "new DozeService()");
@@ -139,7 +152,8 @@ public class DozeService extends DreamService {
                 mPickupSensor = new TriggerSensor(
                         mSensorManager.getDefaultSensor(Sensor.TYPE_PICK_UP_GESTURE),
                         Settings.Secure.DOZE_PULSE_ON_PICK_UP,
-                        mConfig.pulseOnPickupAvailable(), mDozeParameters.getVibrateOnPickup(),
+                        mConfig.pulseOnPickupAvailable(),
+                        mDozeParameters.getVibrateOnPickup(),
                         DozeLog.PULSE_REASON_SENSOR_PICKUP),
                 new TriggerSensor(
                         findSensorWithType(mConfig.doubleTapSensorType()),
@@ -159,6 +173,40 @@ public class DozeService extends DreamService {
     public void onAttachedToWindow() {
         if (DEBUG) Log.d(mTag, "onAttachedToWindow");
         super.onAttachedToWindow();
+
+        TunerService.get(mContext).addTunable(this,
+                DOZE_OVERWRITE_VALUE,
+                DOZE_PROXIMITY_CHECK_BEFORE_PULSE,
+                DOZE_SCREEN_BRIGHTNESS);
+    }
+
+    @Override
+    public void onDetachedFromWindow() {
+        TunerService.get(mContext).removeTunable(this);
+        super.onDetachedFromWindow();
+    }
+
+    @Override
+    public void onTuningChanged(String key, String newValue) {
+        switch (key) {
+            case DOZE_OVERWRITE_VALUE:
+                     mOverwriteValue =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                break;
+            case DOZE_PROXIMITY_CHECK_BEFORE_PULSE:
+                     mCheckProximity =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                break;
+            case DOZE_SCREEN_BRIGHTNESS:
+                     mScreenBrightness =
+                        newValue == null ? mContext.getResources().getInteger(
+                        com.android.internal.R.integer.config_screenBrightnessDoze)
+                        : Integer.parseInt(newValue);
+                     setDozeScreenBrightness(getDozeBrightness());
+                break;
+            default:
+                break;
+        }
     }
 
     @Override
@@ -220,6 +268,13 @@ public class DozeService extends DreamService {
         requestPulse(reason, false /* performedProxCheck */);
     }
 
+    public boolean getProximityCheckBeforePulse() {
+        if (mOverwriteValue) {
+            return mCheckProximity;
+        }
+        return mDozeParameters.getProxCheckBeforePulse();
+    }
+
     private void requestPulse(final int reason, boolean performedProxCheck) {
         if (mHost != null && mDreaming && !mPulsing) {
             // Let the host know we want to pulse.  Wait for it to be ready, then
@@ -227,7 +282,7 @@ public class DozeService extends DreamService {
             // Here we need a wakelock to stay awake until the pulse is finished.
             mWakeLock.acquire();
             mPulsing = true;
-            if (!mDozeParameters.getProxCheckBeforePulse()) {
+            if (!getProximityCheckBeforePulse()) {
                 // skip proximity check
                 continuePulsing(reason);
                 return;
@@ -296,8 +351,17 @@ public class DozeService extends DreamService {
         setDozeScreenState(Display.STATE_OFF);
     }
 
+    public int getDozeBrightness() {
+        if (mOverwriteValue) {
+            return mScreenBrightness;
+        }
+        return mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_screenBrightnessDoze);
+    }
+
     private void turnDisplayOn() {
         if (DEBUG) Log.d(mTag, "Display on");
+        setDozeScreenBrightness(getDozeBrightness());
         setDozeScreenState(mDisplayStateSupported ? Display.STATE_DOZE : Display.STATE_ON);
     }
 

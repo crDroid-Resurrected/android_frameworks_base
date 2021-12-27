@@ -1686,6 +1686,17 @@ public class TelephonyManager {
     }
 
     /**
+     * {@hide}
+     */
+    public void toggleLTE(boolean on) {
+        try {
+            getITelephony().toggleLTE(on);
+        } catch (RemoteException e) {
+            //Silently fail
+        }
+    }
+
+    /**
      * Network Class Definitions.
      * Do not change this order, it is used for sorting during emergency calling in
      * {@link TelephonyConnectionService#getFirstPhoneForEmergencyCall()}. Any newer technologies
@@ -3254,6 +3265,16 @@ public class TelephonyManager {
     }
 
     /**
+     * @hide
+     */
+    public void toggle2G(boolean twoGees) {
+        try {
+            getITelephony().toggle2G(twoGees);
+        } catch (RemoteException e) {
+        }
+    }
+
+    /**
      * Returns the MMS user agent.
      */
     public String getMmsUserAgent() {
@@ -4799,6 +4820,8 @@ public class TelephonyManager {
                 return telephony.needsOtaServiceProvisioning();
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelephony#needsOtaServiceProvisioning", e);
+        } catch (NullPointerException npe) {
+            Log.e(TAG, "Error calling ITelephony#needsOtaServiceProvisioning", npe);
         }
         return false;
     }
@@ -4826,6 +4849,8 @@ public class TelephonyManager {
                 telephony.setDataEnabled(subId, enable);
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling setDataEnabled", e);
+        } catch (NullPointerException npe) {
+            Log.e(TAG, "Error calling setDataEnabled", npe);
         }
     }
 
@@ -4892,6 +4917,8 @@ public class TelephonyManager {
                 return telephony.isVideoCallingEnabled(getOpPackageName());
         } catch (RemoteException e) {
             Log.e(TAG, "Error calling ITelephony#isVideoCallingEnabled", e);
+        } catch (NullPointerException npe) {
+            Log.e(TAG, "Error calling ITelephony#isVideoCallingEnabled", npe);
         }
         return false;
     }

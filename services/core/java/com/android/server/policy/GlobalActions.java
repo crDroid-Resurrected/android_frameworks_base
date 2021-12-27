@@ -32,6 +32,8 @@ import android.app.ActivityManager;
 import android.app.ActivityManagerNative;
 import android.app.Dialog;
 import android.app.INotificationManager;
+import android.app.IThemeCallback;
+import android.app.ThemeManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -80,6 +82,8 @@ import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.ContextThemeWrapper;
+import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -105,13 +109,14 @@ import java.util.BitSet;
 import java.util.List;
 
 import static com.android.internal.util.cm.PowerMenuConstants.*;
+import com.android.internal.util.crdroid.OnTheGoActions;
 
 /**
  * Helper to show the global actions dialog.  Each item is an {@link Action} that
  * may show depending on whether the keyguard is showing, and whether the device
  * is provisioned.
  */
-class GlobalActions implements DialogInterface.OnDismissListener, DialogInterface.OnClickListener  {
+public class GlobalActions implements DialogInterface.OnDismissListener, DialogInterface.OnClickListener  {
 
     private static final String TAG = "GlobalActions";
 
@@ -147,6 +152,22 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
     private BitSet mAirplaneModeBits;
     private final List<PhoneStateListener> mPhoneStateListeners = new ArrayList<>();
+
+    private ThemeManager mThemeManager;
+    private static int sTheme;
+
+    private final IThemeCallback mThemeCallback = new IThemeCallback.Stub() {
+
+        @Override
+        public void onThemeChanged(int themeMode, int color) {
+            onCallbackAdded(themeMode, color);
+        }
+
+        @Override
+        public void onCallbackAdded(int themeMode, int color) {
+            sTheme = color;
+        }
+    };
 
     /**
      * @param context everything needs a context :(
@@ -244,6 +265,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         }
         // Set the initial status of airplane mode toggle
         mAirplaneState = getUpdatedAirplaneToggleState();
+
+        mThemeManager = (ThemeManager) mContext.getSystemService(Context.THEME_SERVICE);
+        if (mThemeManager != null) {
+            mThemeManager.addCallback(mThemeCallback);
+        }
     }
 
     /**
@@ -279,18 +305,85 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         awakenIfNecessary();
         mDialog = createDialog();
         prepareDialog();
+        WindowManager.LayoutParams attrs = mDialog.getWindow().getAttributes();
+        attrs.setTitle("GlobalActions");
+        attrs.alpha = setPowerMenuAlpha();
 
-        // If we only have 1 item and it's a simple press action, just do this action.
-        if (mAdapter.getCount() == 1
-                && mAdapter.getItem(0) instanceof SinglePressAction
-                && !(mAdapter.getItem(0) instanceof LongPressAction)) {
-            ((SinglePressAction) mAdapter.getItem(0)).onPress();
+        boolean isPrimary = UserHandle.getCallingUserId() == UserHandle.USER_OWNER;
+        int powermenuAnimation = isPrimary ? getPowermenuAnimation() : 0;
+
+        if (powermenuAnimation == 0) {
+            // default AOSP action
+        } else if (powermenuAnimation == 1) {
+            attrs.windowAnimations = R.style.PowerMenuBottomAnimation;
+            attrs.gravity = Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 2) {
+            attrs.windowAnimations = R.style.PowerMenuTopAnimation;
+            attrs.gravity = Gravity.TOP|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 3) {
+            attrs.windowAnimations = R.style.PowerMenuRotateAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 4) {
+            attrs.windowAnimations = R.style.PowerMenuXylonAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 5) {
+            attrs.windowAnimations = R.style.PowerMenuTranslucentAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 6) {
+            attrs.windowAnimations = R.style.PowerMenuTnAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 7) {
+            attrs.windowAnimations = R.style.PowerMenuflyAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 8) {
+            attrs.windowAnimations = R.style.PowerMenuCardAnimation;
+            attrs.gravity = Gravity.CENTER_VERTICAL|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 9) {
+            attrs.windowAnimations = R.style.PowerMenuTranslucentAnimation;
+            attrs.gravity = Gravity.TOP|Gravity.CENTER_HORIZONTAL;
+        } else if (powermenuAnimation == 10) {
+            attrs.windowAnimations = R.style.PowerMenuTranslucentAnimation;
+            attrs.gravity = Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL;
+        }            
+        mDialog.getWindow().setAttributes(attrs);
+        mDialog.getWindow().setDimAmount(setPowerMenuDialogDim());
+        mDialog.show();
+        mDialog.getWindow().getDecorView().setSystemUiVisibility(View.STATUS_BAR_DISABLE_EXPAND);
+    }
+
+    private int getPowermenuAnimation() {
+        return Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.POWER_MENU_ANIMATION, 0);
+    }
+
+    private float setPowerMenuAlpha() {
+        int mPowerMenuAlpha = Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.TRANSPARENT_POWER_MENU, 100);
+        double dAlpha = mPowerMenuAlpha / 100.0;
+        float alpha = (float) dAlpha;
+        return alpha;
+    }
+
+    private float setPowerMenuDialogDim() {
+        int mPowerMenuDialogDim = Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.TRANSPARENT_POWER_DIALOG_DIM, 50);
+        double dDim = mPowerMenuDialogDim / 100.0;
+        float dim = (float) dDim;
+        return dim;
+    }
+
+    public static Context getContext(Context context) {
+        int themeMode = Settings.Secure.getInt(context.getContentResolver(),
+                Settings.Secure.THEME_PRIMARY_COLOR, 0);
+        int accentColor = Settings.Secure.getInt(context.getContentResolver(),
+                Settings.Secure.THEME_ACCENT_COLOR, 0);
+
+        if (themeMode == 0 && accentColor == 0) {
+            // Keep original theme
+            return context;
         } else {
-            WindowManager.LayoutParams attrs = mDialog.getWindow().getAttributes();
-            attrs.setTitle("GlobalActions");
-            mDialog.getWindow().setAttributes(attrs);
-            mDialog.show();
-            mDialog.getWindow().getDecorView().setSystemUiVisibility(View.STATUS_BAR_DISABLE_EXPAND);
+            // Use our color engine theme
+            return new ContextThemeWrapper(context, sTheme);
         }
     }
 
@@ -410,14 +503,43 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             mItems.add(getEmergencyAction());
         }
 
+        // next: On-The-Go, if enabled
+	ContentResolver resolver = mContext.getContentResolver();
+        boolean showOnTheGo = Settings.System.getInt(
+                resolver, Settings.System.POWER_MENU_ONTHEGO_ENABLED, 0) == 1;
+        if (showOnTheGo) {
+            mItems.add(
+                new SinglePressAction(com.android.internal.R.drawable.ic_lock_onthego,
+                        R.string.global_action_onthego) {
+
+                        public void onPress() {
+                            OnTheGoActions.processAction(mContext,
+                                    OnTheGoActions.ACTION_ONTHEGO_TOGGLE);
+                        }
+
+                        public boolean onLongPress() {
+                            return false;
+                        }
+
+                        public boolean showDuringKeyguard() {
+                            return true;
+                        }
+
+                        public boolean showBeforeProvisioning() {
+                            return true;
+                        }
+                    }
+            );
+        }
+
         mAdapter = new MyAdapter();
 
-        AlertParams params = new AlertParams(mContext);
+        AlertParams params = new AlertParams(getContext(mContext));
         params.mAdapter = mAdapter;
         params.mOnClickListener = this;
         params.mForceInverseBackground = true;
 
-        GlobalActionsDialog dialog = new GlobalActionsDialog(mContext, params);
+        GlobalActionsDialog dialog = new GlobalActionsDialog(getContext(mContext), params);
         dialog.setCanceledOnTouchOutside(false); // Handled by the custom class.
 
         dialog.getListView().setItemsCanFocus(true);
@@ -786,6 +908,15 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         }
     }
 
+    private void startOnTheGo() {
+        final ComponentName cn = new ComponentName("com.android.systemui",
+                "com.android.systemui.crdroid.onthego.OnTheGoService");
+        final Intent startIntent = new Intent();
+        startIntent.setComponent(cn);
+        startIntent.setAction("start");
+        mContext.startService(startIntent);
+    }
+
     /**
      * functions needed for taking screenhots.
      * This leverages the built in ICS screenshot functionality
@@ -971,7 +1102,9 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
         public View getView(int position, View convertView, ViewGroup parent) {
             Action action = getItem(position);
-            return action.create(mContext, convertView, parent, LayoutInflater.from(mContext));
+            Context inflateContext = getContext(mContext);
+            return action.create(inflateContext, convertView, parent,
+                    LayoutInflater.from(inflateContext));
         }
     }
 

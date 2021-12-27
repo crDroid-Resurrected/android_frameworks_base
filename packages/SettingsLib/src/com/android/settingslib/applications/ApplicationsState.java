@@ -137,9 +137,11 @@ public class ApplicationsState {
         // Only the owner can see all apps.
         mAdminRetrieveFlags = PackageManager.GET_UNINSTALLED_PACKAGES |
                 PackageManager.GET_DISABLED_COMPONENTS |
-                PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS;
+                PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS |
+                PackageManager.GET_META_DATA;
         mRetrieveFlags = PackageManager.GET_DISABLED_COMPONENTS |
-                PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS;
+                PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS |
+                PackageManager.GET_META_DATA;
 
         /**
          * This is a trick to prevent the foreground thread from being delayed.
@@ -649,7 +651,11 @@ public class ApplicationsState {
             }
 
             if (comparator != null) {
-                Collections.sort(filteredApps, comparator);
+                synchronized (mEntriesMap) {
+                    // Locking to ensure that the background handler does not mutate
+                    // the size of AppEntries used for ordering while sorting.
+                    Collections.sort(filteredApps, comparator);
+                }
             }
 
             synchronized (mRebuildSync) {
@@ -1245,7 +1251,7 @@ public class ApplicationsState {
                     return compareResult;
                 }
             }
-            return object1.info.uid - object2.info.uid;
+            return (object1.info != null ? object1.info.uid : 0) - (object2.info != null ? object2.info.uid : 0);
         }
     };
 
@@ -1309,6 +1315,28 @@ public class ApplicationsState {
         public boolean filterApp(AppEntry entry) {
             return entry.info.enabledSetting
                     != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED;
+        }
+    };
+
+    public static final AppFilter FILTER_SUBSTRATUM = new AppFilter() {
+        public void init() {
+        }
+
+        @Override
+        public boolean filterApp(AppEntry entry) {
+            return !((entry.info.metaData != null) &&
+                    (entry.info.metaData.getString("Substratum_Parent") != null));
+        }
+    };
+
+    public static final AppFilter FILTER_SUBSTRATUM_ICONS = new AppFilter() {
+        public void init() {
+        }
+
+        @Override
+        public boolean filterApp(AppEntry entry) {
+            return !((entry.info.metaData != null) &&
+                    (entry.info.metaData.getString("Substratum_IconPack") != null));
         }
     };
 

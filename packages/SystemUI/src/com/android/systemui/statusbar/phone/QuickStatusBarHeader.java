@@ -20,26 +20,37 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ContentUris;
 import android.content.Context;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.RippleDrawable;
+import android.graphics.drawable.TransitionDrawable;
 import android.net.Uri;
+import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.AlarmClock;
 import android.provider.CalendarContract;
+import android.provider.Settings;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.SparseBooleanArray;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.MetricsProto;
 import com.android.keyguard.KeyguardStatusView;
+import com.android.systemui.crdroid.omnistyle.StatusBarHeaderMachine;
 import com.android.systemui.FontSizeUtils;
 import com.android.systemui.R;
 import com.android.systemui.qs.QSPanel;
@@ -61,7 +72,7 @@ import com.android.systemui.tuner.TunerService;
 
 public class QuickStatusBarHeader extends BaseStatusBarHeader implements
         NextAlarmChangeCallback, OnClickListener, OnUserInfoChangedListener, EmergencyListener,
-        SignalCallback {
+        SignalCallback, TunerService.Tunable, StatusBarHeaderMachine.IStatusBarHeaderMachineObserver {
 
     private static final String TAG = "QuickStatusBarHeader";
 
@@ -85,6 +96,7 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
 
     private ViewGroup mDateTimeGroup;
     private ViewGroup mDateTimeAlarmGroup;
+    private ViewGroup mDateTimeAlarmCenterGroup;
     private TextView mEmergencyOnly;
 
     protected ExpandableIndicator mExpandIndicator;
@@ -108,6 +120,32 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
     private SparseBooleanArray mRoamingsBySubId = new SparseBooleanArray();
     private boolean mIsRoaming;
 
+    private boolean isSettingsIcon;
+    private boolean isSettingsExpanded;
+    private boolean isEdit;
+    private boolean isExpandIndicator;
+    private boolean isMultiUserSwitch;
+    private boolean isDateTimeGroupCenter;
+    private boolean mDateTimeGroupCenter;
+    private ImageView mBackgroundImage;
+    private Drawable mCurrentBackground;
+
+    private int mQsPanelOffsetNormal;
+    private int mQsPanelOffsetHeader;
+
+    private static final String QS_SETTINGS_ICON_TOGGLE =
+            "system:" + Settings.System.QS_SETTINGS_ICON_TOGGLE;
+    private static final String QS_SETTINGS_EXPANDED_TOGGLE =
+            "system:" + Settings.System.QS_SETTINGS_EXPANDED_TOGGLE;
+    private static final String QS_EDIT_TOGGLE =
+            "system:" + Settings.System.QS_EDIT_TOGGLE;
+    private static final String QS_EXPAND_INDICATOR_TOGGLE =
+            "system:" + Settings.System.QS_EXPAND_INDICATOR_TOGGLE;
+    private static final String QS_MULTIUSER_SWITCH_TOGGLE =
+            "system:" + Settings.System.QS_MULTIUSER_SWITCH_TOGGLE;
+    private static final String QS_DATE_TIME_CENTER =
+            "system:" + Settings.System.QS_DATE_TIME_CENTER;
+
     public QuickStatusBarHeader(Context context, AttributeSet attrs) {
         super(context, attrs);
     }
@@ -124,6 +162,8 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
 
         mDateTimeAlarmGroup = (ViewGroup) findViewById(R.id.date_time_alarm_group);
         mDateTimeAlarmGroup.findViewById(R.id.empty_time_view).setVisibility(View.GONE);
+        mDateTimeAlarmCenterGroup = (ViewGroup) findViewById(R.id.date_time_alarm_center_group);
+        mDateTimeAlarmCenterGroup.setVisibility(View.GONE);
         mDateTimeGroup = (ViewGroup) findViewById(R.id.date_time_group);
         mDateTimeGroup.setPivotX(0);
         mDateTimeGroup.setPivotY(0);
@@ -156,6 +196,8 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
         ((RippleDrawable) mSettingsButton.getBackground()).setForceSoftware(true);
         ((RippleDrawable) mExpandIndicator.getBackground()).setForceSoftware(true);
 
+        mBackgroundImage = (ImageView) findViewById(R.id.background_image);
+
         updateResources();
     }
 
@@ -174,6 +216,11 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
     private void updateResources() {
         FontSizeUtils.updateFontSize(mAlarmStatus, R.dimen.qs_date_collapsed_size);
         FontSizeUtils.updateFontSize(mEmergencyOnly, R.dimen.qs_emergency_calls_only_text_size);
+        FontSizeUtils.updateFontSize(this, R.id.date, R.dimen.qs_time_collapsed_size);
+        FontSizeUtils.updateFontSize(mDateTimeGroup, R.id.time_view,
+                R.dimen.qs_time_collapsed_size);
+        FontSizeUtils.updateFontSize(mDateTimeGroup, R.id.am_pm_view,
+                R.dimen.qs_time_collapsed_size);
 
         Builder builder = new Builder()
                 .addFloat(mShowFullAlarm ? mAlarmStatus : findViewById(R.id.date), "alpha", 0, 1)
@@ -184,6 +231,18 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
         mAnimator = builder.build();
 
         updateSettingsAnimator();
+        updateSettings();
+
+        mQsPanelOffsetNormal = getResources().getDimensionPixelSize(R.dimen.qs_panel_top_offset_normal);
+        mQsPanelOffsetHeader = getResources().getDimensionPixelSize(R.dimen.qs_panel_top_offset_header);
+
+        post(new Runnable() {
+            public void run() {
+                setHeaderImageHeight();
+                // the dimens could have been changed
+                setQsPanelOffset();
+            }
+        });
     }
 
     protected void updateSettingsAnimator() {
@@ -260,6 +319,7 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
         mHost.getUserInfoController().remListener(this);
         mHost.getNetworkController().removeEmergencyListener(this);
         super.onDetachedFromWindow();
+        TunerService.get(mContext).removeTunable(this);
     }
 
     private void updateAlarmVisibilities() {
@@ -294,12 +354,25 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
         mSettingsContainer.findViewById(R.id.tuner_icon).setVisibility(View.INVISIBLE);
         final boolean isDemo = UserManager.isDeviceInDemoMode(mContext);
         mMultiUserSwitch.setVisibility(mExpanded && mMultiUserSwitch.hasMultipleUsers() && !isDemo
-                ? View.VISIBLE : View.INVISIBLE);
-        mEdit.setVisibility(isDemo || !mExpanded ? View.INVISIBLE : View.VISIBLE);
+                ? View.VISIBLE : View.GONE);
+        mEdit.setVisibility(!isEdit || isDemo || !mExpanded ? View.GONE : View.VISIBLE);
+        mSettingsButton.setVisibility(mExpanded && isSettingsExpanded || isSettingsIcon
+                ? View.VISIBLE : View.GONE);
+        mSettingsContainer.setVisibility(
+                mExpanded && isSettingsExpanded || isSettingsIcon ? View.VISIBLE : View.GONE);
+        mExpandIndicator.setVisibility(isExpandIndicator ? View.VISIBLE : View.GONE);
+        mMultiUserSwitch.setVisibility(isMultiUserSwitch ? View.VISIBLE : View.GONE);
+        mMultiUserAvatar.setVisibility(isMultiUserSwitch ? View.VISIBLE : View.GONE);
+        mDateTimeGroupCenter = isDateTimeGroupCenter && !((isSettingsIcon || isSettingsExpanded)
+                && isEdit && isMultiUserSwitch && isExpandIndicator);
+        mDateTimeAlarmGroup.setVisibility(mDateTimeGroupCenter ? View.GONE : View.VISIBLE);
+        mDateTimeAlarmCenterGroup.setVisibility(mDateTimeGroupCenter ? View.VISIBLE : View.GONE);
     }
 
     private void updateDateTimePosition() {
         mDateTimeAlarmGroup.setTranslationY(mShowEmergencyCallsOnly || mIsRoaming
+                ? mExpansionAmount * mDateTimeTranslation : 0);
+        mDateTimeAlarmCenterGroup.setTranslationY(mShowEmergencyCallsOnly
                 ? mExpansionAmount * mDateTimeTranslation : 0);
     }
 
@@ -438,7 +511,7 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
     @Override
     public void setMobileDataIndicators(IconState statusIcon, IconState qsIcon, int statusType,
             int qsType, boolean activityIn, boolean activityOut, String typeContentDescription,
-            String description, boolean isWide, int subId, boolean roaming) {
+            String description, boolean isWide, int subId, boolean roaming, boolean isMobileIms) {
         mRoamingsBySubId.put(subId, roaming);
         boolean isRoaming = calculateRoaming();
         if (mIsRoaming != isRoaming) {
@@ -466,5 +539,151 @@ public class QuickStatusBarHeader extends BaseStatusBarHeader implements
     @Override
     public void setWeatherController(WeatherController weatherController) {
         // not used
+    }
+
+    @Override
+    public void updateSettings() {
+        if (mQsPanel != null) {
+            mQsPanel.updateSettings();
+
+            // if header is active we want to push the qs panel a little bit further down
+            // to have more space for the header image
+            post(new Runnable() {
+                public void run() {
+                    setQsPanelOffset();
+                }
+            });
+        }
+        applyHeaderBackgroundShadow();
+    }
+
+    @Override
+    public void updateHeader(final Drawable headerImage, final boolean force) {
+        post(new Runnable() {
+             public void run() {
+                doUpdateStatusBarCustomHeader(headerImage, force);
+            }
+        });
+    }
+
+    @Override
+    public void disableHeader() {
+        post(new Runnable() {
+             public void run() {
+                mCurrentBackground = null;
+                mBackgroundImage.setVisibility(View.GONE);
+            }
+        });
+    }
+
+    private void doUpdateStatusBarCustomHeader(final Drawable next, final boolean force) {
+        if (next != null) {
+            if (next != mCurrentBackground) {
+                Log.i(TAG, "Updating status bar header background");
+                mBackgroundImage.setVisibility(View.VISIBLE);
+                setNotificationPanelHeaderBackground(next, force);
+                mCurrentBackground = next;
+            }
+        } else {
+            mCurrentBackground = null;
+            mBackgroundImage.setVisibility(View.GONE);
+        }
+    }
+
+    private void setNotificationPanelHeaderBackground(final Drawable dw, final boolean force) {
+        if (mBackgroundImage.getDrawable() != null && !force) {
+            Drawable[] arrayDrawable = new Drawable[2];
+            arrayDrawable[0] = mBackgroundImage.getDrawable();
+            arrayDrawable[1] = dw;
+
+            TransitionDrawable transitionDrawable = new TransitionDrawable(arrayDrawable);
+            transitionDrawable.setCrossFadeEnabled(true);
+            mBackgroundImage.setImageDrawable(transitionDrawable);
+            transitionDrawable.startTransition(1000);
+        } else {
+            mBackgroundImage.setImageDrawable(dw);
+        }
+        updateSettings();
+    }
+
+    private void applyHeaderBackgroundShadow() {
+        final int headerShadow = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.STATUS_BAR_CUSTOM_HEADER_SHADOW, 80,
+                UserHandle.USER_CURRENT);
+
+        if (mBackgroundImage != null) {
+            if (headerShadow != 0) {
+                ColorDrawable shadow = new ColorDrawable(Color.BLACK);
+                shadow.setAlpha(headerShadow);
+                mBackgroundImage.setForeground(shadow);
+            } else {
+                mBackgroundImage.setForeground(null);
+            }
+        }
+    }
+
+    private void setQsPanelOffset() {
+        final boolean customHeader = Settings.System.getIntForUser(mContext.getContentResolver(),
+                Settings.System.STATUS_BAR_CUSTOM_HEADER, 0,
+                UserHandle.USER_CURRENT) != 0;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mQsPanel.getLayoutParams();
+        params.setMargins(0, customHeader ? mQsPanelOffsetHeader : mQsPanelOffsetNormal, 0, 0);
+        mQsPanel.setLayoutParams(params);
+    }
+
+    private void setHeaderImageHeight() {
+        LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) mBackgroundImage.getLayoutParams();
+        p.height = getExpandedHeight();
+        mBackgroundImage.setLayoutParams(p);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        TunerService.get(mContext).addTunable(this,
+                QS_SETTINGS_ICON_TOGGLE,
+                QS_SETTINGS_EXPANDED_TOGGLE,
+                QS_EDIT_TOGGLE,
+                QS_EXPAND_INDICATOR_TOGGLE,
+                QS_MULTIUSER_SWITCH_TOGGLE,
+                QS_DATE_TIME_CENTER);
+    }
+
+    @Override
+    public void onTuningChanged(String key, String newValue) {
+        switch (key) {
+            case QS_SETTINGS_ICON_TOGGLE:
+                isSettingsIcon =
+                        newValue == null || Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            case QS_SETTINGS_EXPANDED_TOGGLE:
+                isSettingsExpanded =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            case QS_EDIT_TOGGLE:
+                isEdit =
+                        newValue == null || Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            case QS_EXPAND_INDICATOR_TOGGLE:
+                isExpandIndicator =
+                        newValue == null || Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            case QS_MULTIUSER_SWITCH_TOGGLE:
+                isMultiUserSwitch =
+                        newValue == null || Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            case QS_DATE_TIME_CENTER:
+                isDateTimeGroupCenter =
+                        newValue != null && Integer.parseInt(newValue) == 1;
+                updateVisibilities();
+                break;
+            default:
+                break;
+        }
     }
 }

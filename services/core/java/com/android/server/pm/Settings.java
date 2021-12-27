@@ -811,7 +811,7 @@ final class Settings {
                                     false, // suspended
                                     null, null, null,
                                     false, // blockUninstall
-                                    INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED, 0,
+                                    INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED, 0, null,
                                     null,
                                     null
                                     );
@@ -1088,9 +1088,12 @@ final class Settings {
             if (p.sharedUser != null) {
                 p.sharedUser.removePackage(p);
                 if (p.sharedUser.packages.size() == 0) {
-                    mSharedUsers.remove(p.sharedUser.name);
-                    removeUserIdLPw(p.sharedUser.userId);
-                    return p.sharedUser.userId;
+                    PackageSetting disabledPs = getDisabledSystemPkgLPr(name);
+                    if (disabledPs == null || disabledPs.sharedUser == null || !disabledPs.sharedUser.name.equals(p.sharedUser.name)) {
+                        mSharedUsers.remove(p.sharedUser.name);
+                        removeUserIdLPw(p.sharedUser.userId);
+                        return p.sharedUser.userId;
+                    }
                 }
             } else {
                 removeUserIdLPw(p.appId);
@@ -1619,7 +1622,8 @@ final class Settings {
                                 false,  // suspended
                                 null, null, null,
                                 false, // blockUninstall
-                                INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED, 0,
+
+                                INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED, 0, null,
                                 null,
                                 null
                                 );
@@ -1730,7 +1734,7 @@ final class Settings {
 
                     ps.setUserState(userId, ceDataInode, enabled, installed, stopped, notLaunched,
                             hidden, suspended, enabledCaller, enabledComponents, disabledComponents,
-                            blockUninstall, verifState, linkGeneration,
+                            blockUninstall, verifState, linkGeneration, null,
                             protectedComponents, visibleComponents);
                 } else if (tagName.equals("preferred-activities")) {
                     readPreferredActivitiesLPw(parser, userId);
@@ -1747,22 +1751,16 @@ final class Settings {
                 }
             }
 
-            str.close();
-
             mNextAppLinkGeneration.put(userId, maxAppLinkGeneration + 1);
 
-        } catch (XmlPullParserException e) {
+        } catch (XmlPullParserException | java.io.IOException e) {
             mReadMessages.append("Error reading: " + e.toString());
             PackageManagerService.reportSettingsProblem(Log.ERROR,
-                    "Error reading stopped packages: " + e);
-            Slog.wtf(PackageManagerService.TAG, "Error reading package manager stopped packages",
+                    "Error reading package restrictions: " + e);
+            Slog.wtf(PackageManagerService.TAG, "Error reading package manager package restrictions",
                     e);
-
-        } catch (java.io.IOException e) {
-            mReadMessages.append("Error reading: " + e.toString());
-            PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
-            Slog.wtf(PackageManagerService.TAG, "Error reading package manager stopped packages",
-                    e);
+        } finally {
+            IoUtils.closeQuietly(str);
         }
     }
 
@@ -2087,7 +2085,6 @@ final class Settings {
                     "Unable to write package manager user packages state, "
                     + " current changes will be lost at reboot", e);
         }
-
         // Clean up partially written files
         if (userPackagesStateFile.exists()) {
             if (!userPackagesStateFile.delete()) {
@@ -2272,22 +2269,14 @@ final class Settings {
                     XmlUtils.skipCurrentTag(parser);
                 }
             }
-
-            str.close();
-
-        } catch (XmlPullParserException e) {
+        } catch (XmlPullParserException | java.io.IOException e) {
             mReadMessages.append("Error reading: " + e.toString());
             PackageManagerService.reportSettingsProblem(Log.ERROR,
                     "Error reading stopped packages: " + e);
             Slog.wtf(PackageManagerService.TAG, "Error reading package manager stopped packages",
                     e);
-
-        } catch (java.io.IOException e) {
-            mReadMessages.append("Error reading: " + e.toString());
-            PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
-            Slog.wtf(PackageManagerService.TAG, "Error reading package manager stopped packages",
-                    e);
-
+        } finally {
+            IoUtils.closeQuietly(str);
         }
     }
 
@@ -2445,13 +2434,11 @@ final class Settings {
             writeAllRuntimePermissionsLPr();
             return;
 
-        } catch(XmlPullParserException e) {
-            Slog.wtf(PackageManagerService.TAG, "Unable to write package manager settings, "
-                    + "current changes will be lost at reboot", e);
-        } catch(java.io.IOException e) {
+        } catch(XmlPullParserException | java.io.IOException e) {
             Slog.wtf(PackageManagerService.TAG, "Unable to write package manager settings, "
                     + "current changes will be lost at reboot", e);
         }
+
         // Clean up partially written files
         if (mSettingsFilename.exists()) {
             if (!mSettingsFilename.delete()) {
@@ -2969,18 +2956,12 @@ final class Settings {
                     XmlUtils.skipCurrentTag(parser);
                 }
             }
-
-            str.close();
-
-        } catch (XmlPullParserException e) {
+        } catch (XmlPullParserException | java.io.IOException e) {
             mReadMessages.append("Error reading: " + e.toString());
             PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
             Slog.wtf(PackageManagerService.TAG, "Error reading package manager settings", e);
-
-        } catch (java.io.IOException e) {
-            mReadMessages.append("Error reading: " + e.toString());
-            PackageManagerService.reportSettingsProblem(Log.ERROR, "Error reading settings: " + e);
-            Slog.wtf(PackageManagerService.TAG, "Error reading package manager settings", e);
+        } finally {
+            IoUtils.closeQuietly(str);
         }
 
         // If the build is setup to drop runtime permissions
@@ -3124,9 +3105,7 @@ final class Settings {
                     continue;
                 }
                 readDefaultPreferredActivitiesLPw(service, parser, userId);
-            } catch (XmlPullParserException e) {
-                Slog.w(TAG, "Error reading apps file " + f, e);
-            } catch (IOException e) {
+            } catch (XmlPullParserException | IOException e) {
                 Slog.w(TAG, "Error reading apps file " + f, e);
             } finally {
                 if (str != null) {

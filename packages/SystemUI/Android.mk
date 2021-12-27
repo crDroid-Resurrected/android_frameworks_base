@@ -20,6 +20,10 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_SRC_FILES := $(call all-java-files-under, src) $(call all-Iaidl-files-under, src)
 
+LOCAL_SRC_FILES += $(call all-java-files-under, ../../../../packages/apps/DUI/src)
+
+LOCAL_SRC_FILES += $(call all-java-files-under, ../../../../packages/apps/SlimRecents/src)
+
 LOCAL_STATIC_JAVA_LIBRARIES := \
     Keyguard \
     android-support-v7-recyclerview \
@@ -32,9 +36,12 @@ LOCAL_STATIC_JAVA_LIBRARIES := \
     framework-protos \
     SystemUI-proto-tags \
     org.cyanogenmod.platform.internal \
-    uicommon
+    uicommon \
+    trail-drawing \
+    rebound \
+    android-support-v7-cardview
 
-LOCAL_JAVA_LIBRARIES := telephony-common
+LOCAL_JAVA_LIBRARIES := telephony-common org.dirtyunicorns.utils telephony-ext
 LOCAL_FULL_LIBS_MANIFEST_FILES := $(LOCAL_PATH)/AndroidManifest_cm.xml
 
 LOCAL_PACKAGE_NAME := SystemUI
@@ -50,11 +57,14 @@ LOCAL_RESOURCE_DIR := \
     frameworks/support/v14/preference/res \
     frameworks/support/v7/appcompat/res \
     frameworks/support/v7/recyclerview/res \
-    frameworks/support/v17/leanback/res
+    frameworks/support/v17/leanback/res \
+    packages/apps/DUI/res \
+    packages/apps/SlimRecents/res \
+    frameworks/support/v7/cardview/res
 
 LOCAL_AAPT_FLAGS := --auto-add-overlay \
     --extra-packages com.android.keyguard:android.support.v7.recyclerview:android.support.v7.preference:android.support.v14.preference:android.support.v7.appcompat \
-	--extra-packages android.support.v17.leanback
+	--extra-packages android.support.v17.leanback:android.support.v7.cardview
 
 ifneq ($(SYSTEM_UI_INCREMENTAL_BUILDS),)
     LOCAL_PROGUARD_ENABLED := disabled
@@ -67,4 +77,6 @@ include $(BUILD_PACKAGE)
 
 ifeq ($(EXCLUDE_SYSTEMUI_TESTS),)
     include $(call all-makefiles-under,$(LOCAL_PATH))
+else
+    include frameworks/base/packages/SystemUI/libs/Android.mk
 endif

@@ -1,7 +1,10 @@
 package com.android.systemui.qs;
 
+import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.provider.Settings;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +28,7 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
 
     protected final ArrayList<TileRecord> mRecords = new ArrayList<>();
     private int mCellMarginTop;
+    private int mDefaultColumns;
     private boolean mListening;
 
     public TileLayout(Context context) {
@@ -74,12 +78,21 @@ public class TileLayout extends ViewGroup implements QSTileLayout {
 
     public boolean updateResources() {
         final Resources res = mContext.getResources();
-        final int columns = Math.max(1, res.getInteger(R.integer.quick_settings_num_columns));
+
+        final ContentResolver resolver = mContext.getContentResolver();
+
+        mDefaultColumns = Math.max(1, res.getInteger(R.integer.quick_settings_num_columns));
+        boolean isPortrait = res.getConfiguration().orientation
+                == Configuration.ORIENTATION_PORTRAIT;
+        int columns = Settings.Secure.getInt(resolver,
+                Settings.Secure.QS_COLUMNS_PORTRAIT, mDefaultColumns);
+        int columnsLandscape = Settings.Secure.getInt(resolver,
+                Settings.Secure.QS_COLUMNS_LANDSCAPE, mDefaultColumns);
         mCellHeight = mContext.getResources().getDimensionPixelSize(R.dimen.qs_tile_height);
         mCellMargin = res.getDimensionPixelSize(R.dimen.qs_tile_margin);
         mCellMarginTop = res.getDimensionPixelSize(R.dimen.qs_tile_margin_top);
-        if (mColumns != columns) {
-            mColumns = columns;
+        if (mColumns != (isPortrait ? columns : columnsLandscape)) {
+            mColumns = isPortrait ? columns : columnsLandscape;
             requestLayout();
             return true;
         }

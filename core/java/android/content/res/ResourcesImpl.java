@@ -22,6 +22,7 @@ import android.animation.Animator;
 import android.animation.StateListAnimator;
 import android.annotation.AnyRes;
 import android.annotation.AttrRes;
+import android.annotation.DrawableRes;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.PluralsRes;
@@ -69,8 +70,6 @@ public class ResourcesImpl {
     private static final boolean TRACE_FOR_PRELOAD = false;
     private static final boolean TRACE_FOR_MISS_PRELOAD = false;
 
-    private static final int LAYOUT_DIR_CONFIG = ActivityInfo.activityInfoConfigJavaToNative(
-            ActivityInfo.CONFIG_LAYOUT_DIRECTION);
 
     private static final int ID_OTHER = 0x01000004;
 
@@ -282,19 +281,19 @@ public class ResourcesImpl {
     }
 
     @NonNull
-    AssetFileDescriptor openRawResourceFd(@RawRes int id, TypedValue tempValue)
+    AssetFileDescriptor openRawResourceFd(@RawRes @DrawableRes int id, TypedValue tempValue)
             throws NotFoundException {
         getValue(id, tempValue, true);
         try {
             return mAssets.openNonAssetFd(tempValue.assetCookie, tempValue.string.toString());
         } catch (Exception e) {
-            throw new NotFoundException("File " + tempValue.string.toString() + " from drawable "
-                    + "resource ID #0x" + Integer.toHexString(id), e);
+            throw new NotFoundException("File " + tempValue.string.toString() + " from raw or"
+                    + " drawable resource ID #0x" + Integer.toHexString(id), e);
         }
     }
 
     @NonNull
-    InputStream openRawResource(@RawRes int id, TypedValue value) throws NotFoundException {
+    InputStream openRawResource(@RawRes @DrawableRes int id, TypedValue value) throws NotFoundException {
         getValue(id, value, true);
         try {
             return mAssets.openNonAsset(value.assetCookie, value.string.toString(),
@@ -303,7 +302,7 @@ public class ResourcesImpl {
             // Note: value.string might be null
             NotFoundException rnf = new NotFoundException("File "
                     + (value.string == null ? "(null)" : value.string.toString())
-                    + " from drawable resource ID #0x" + Integer.toHexString(id));
+                    + " from raw or drawable resource ID #0x" + Integer.toHexString(id));
             rnf.initCause(e);
             throw rnf;
         }
@@ -624,8 +623,8 @@ public class ResourcesImpl {
                 }
             } else {
                 if (verifyPreloadConfig(
-                        changingConfigs, LAYOUT_DIR_CONFIG, value.resourceId, "drawable")) {
-                    if ((changingConfigs & LAYOUT_DIR_CONFIG) == 0) {
+                        changingConfigs, ActivityInfo.CONFIG_LAYOUT_DIRECTION, value.resourceId, "drawable")) {
+                    if ((changingConfigs & ActivityInfo.CONFIG_LAYOUT_DIRECTION) == 0) {
                         // If this resource does not vary based on layout direction,
                         // we can put it in all of the preload maps.
                         sPreloadedDrawables[0].put(key, cs);

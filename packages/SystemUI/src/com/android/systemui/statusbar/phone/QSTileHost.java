@@ -50,21 +50,32 @@ import com.android.systemui.qs.tiles.CaffeineTile;
 import com.android.systemui.qs.tiles.CastTile;
 import com.android.systemui.qs.tiles.CellularTile;
 import com.android.systemui.qs.tiles.ColorInversionTile;
+import com.android.systemui.qs.tiles.CompassTile;
 import com.android.systemui.qs.tiles.DataSaverTile;
 import com.android.systemui.qs.tiles.DndTile;
+import com.android.systemui.qs.tiles.ExpandedDesktopTile;
 import com.android.systemui.qs.tiles.FlashlightTile;
 import com.android.systemui.qs.tiles.HeadsUpTile;
 import com.android.systemui.qs.tiles.HotspotTile;
+import com.android.systemui.qs.tiles.ImeTile;
 import com.android.systemui.qs.tiles.IntentTile;
 import com.android.systemui.qs.tiles.LiveDisplayTile;
 import com.android.systemui.qs.tiles.LocationTile;
+import com.android.systemui.qs.tiles.LteTile;
+import com.android.systemui.qs.tiles.MusicTile;
+import com.android.systemui.qs.tiles.NavigationBarTile;
 import com.android.systemui.qs.tiles.NfcTile;
 import com.android.systemui.qs.tiles.NightDisplayTile;
+import com.android.systemui.qs.tiles.PieTile;
+import com.android.systemui.qs.tiles.PulseTile;
+import com.android.systemui.qs.tiles.RebootTile;
 import com.android.systemui.qs.tiles.RotationLockTile;
+import com.android.systemui.qs.tiles.ScreenshotTile;
 import com.android.systemui.qs.tiles.SyncTile;
 import com.android.systemui.qs.tiles.UsbTetherTile;
 import com.android.systemui.qs.tiles.UserTile;
 import com.android.systemui.qs.tiles.VolumeTile;
+import com.android.systemui.qs.tiles.WeatherTile;
 import com.android.systemui.qs.tiles.WifiTile;
 import com.android.systemui.qs.tiles.ProfilesTile;
 import com.android.systemui.qs.tiles.WorkModeTile;
@@ -419,6 +430,7 @@ public class QSTileHost implements QSTile.Host, Tunable {
             String tileSpec = previousTiles.get(i);
             if (!tileSpec.startsWith(CustomTile.PREFIX)) continue;
             if (!newTiles.contains(tileSpec)) {
+                // Get the custom tile ready to be removed
                 ComponentName component = CustomTile.getComponentFromSpec(tileSpec);
                 Intent intent = new Intent().setComponent(component);
                 TileLifecycleManager lifecycleManager = new TileLifecycleManager(new Handler(),
@@ -462,6 +474,17 @@ public class QSTileHost implements QSTile.Host, Tunable {
         else if (tileSpec.equals("sync")) return new SyncTile(this);
         else if (tileSpec.equals("usb_tether")) return new UsbTetherTile(this);
         else if (tileSpec.equals("volume_panel")) return new VolumeTile(this);
+        else if (tileSpec.equals("weather")) return new WeatherTile(this);
+        else if (tileSpec.equals("navigation_bar")) return new NavigationBarTile(this);
+        else if (tileSpec.equals("expanded_desktop")) return new ExpandedDesktopTile(this);
+        else if (tileSpec.equals("screenshot")) return new ScreenshotTile(this);
+        else if (tileSpec.equals("reboot")) return new RebootTile(this);
+        else if (tileSpec.equals("music")) return new MusicTile(this);
+        else if (tileSpec.equals("ime")) return new ImeTile(this);
+        else if (tileSpec.equals("lte")) return  new LteTile(this);
+        else if (tileSpec.equals("pulse")) return new PulseTile(this);
+        else if (tileSpec.equals("compass")) return new CompassTile(this);
+        else if (tileSpec.equals("pie")) return  new PieTile(this);
         // Intent tiles.
         else if (tileSpec.startsWith(IntentTile.PREFIX)) return IntentTile.create(this,tileSpec);
         else if (tileSpec.startsWith(CustomTile.PREFIX)) return CustomTile.create(this,tileSpec);
@@ -502,5 +525,34 @@ public class QSTileHost implements QSTile.Host, Tunable {
             }
         }
         return tiles;
+    }
+
+    /**
+     * Remove custom tiles with the same package name
+     **/
+    public void removeTilesWithSamePkg(String pkgName) {
+        List<String> newTileSpecs = new ArrayList<>();
+            newTileSpecs.addAll(mTileSpecs);
+            for (String spec : mTileSpecs) {
+            if (!spec.startsWith(CustomTile.PREFIX)) continue;
+            if (spec.contains(pkgName)) {
+                // Get the custom tile ready to be removed
+                ComponentName component = CustomTile.getComponentFromSpec(spec);
+                Intent intent = new Intent().setComponent(component);
+                TileLifecycleManager lifecycleManager = new TileLifecycleManager(new Handler(),
+                        mContext, mServices, new Tile(), intent,
+                        new UserHandle(ActivityManager.getCurrentUser()));
+                lifecycleManager.onStopListening();
+                lifecycleManager.onTileRemoved();
+                lifecycleManager.flushMessagesAndUnbind();
+                // Remove spec from newTileSpecs
+                newTileSpecs.remove(spec);
+            }
+        }
+        // Save into Settings
+        if (newTileSpecs.size() != mTileSpecs.size()) {
+            Secure.putStringForUser(getContext().getContentResolver(), QSTileHost.TILES_SETTING,
+                    TextUtils.join(",", newTileSpecs), ActivityManager.getCurrentUser());
+        }
     }
 }

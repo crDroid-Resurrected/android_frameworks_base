@@ -62,6 +62,12 @@ interface ITelephony {
     void call(String callingPackage, String number);
 
     /**
+     * Toggle between 3G and LTE (NT_MODE_CDMA, NT_MODE_GLOBAL)
+     * @param boolean to turn on and off LTE
+     */
+    void toggleLTE(boolean on);
+
+    /**
      * End call if there is a call in progress, otherwise does nothing.
      *
      * @return whether it hung up
@@ -1209,4 +1215,11 @@ interface ITelephony {
      * @hide
      */
     void setPolicyDataEnabled(boolean enabled, int subId);
+
+    /**
+     * Toggle between 2G and 3G (NT_MODE_GSM, NT_MODE_WCDMA_PREF)
+     * @param boolean to turn on and off 2G
+     * @hide
+     */
+     void toggle2G(boolean on);
 }

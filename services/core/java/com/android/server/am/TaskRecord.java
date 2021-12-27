@@ -480,10 +480,20 @@ final class TaskRecord {
     }
 
     /** Sets the original minimal width and height. */
-    private void setMinDimensions(ActivityInfo info) {
+    void setMinDimensions(ActivityInfo info) {
         if (info != null && info.windowLayout != null) {
             mMinWidth = info.windowLayout.minWidth;
             mMinHeight = info.windowLayout.minHeight;
+            final int densityDpi = mService.mConfiguration.densityDpi;
+            if (DisplayMetrics.DENSITY_DEVICE_STABLE > 0) {
+                // adjust min dimensions if system density is changed.
+                if (mMinWidth != INVALID_MIN_SIZE) {
+                   mMinWidth = (mMinWidth * densityDpi) / DisplayMetrics.DENSITY_DEVICE_STABLE;
+                }
+                if (mMinHeight != INVALID_MIN_SIZE) {
+                   mMinHeight = (mMinHeight * densityDpi) / DisplayMetrics.DENSITY_DEVICE_STABLE;
+                }
+            }
         } else {
             mMinWidth = INVALID_MIN_SIZE;
             mMinHeight = INVALID_MIN_SIZE;
@@ -1657,11 +1667,6 @@ final class TaskRecord {
 
     /** Returns the bounds that should be used to launch this task. */
     Rect getLaunchBounds() {
-        // If we're over lockscreen, forget about stack bounds and use fullscreen.
-        if (mService.mLockScreenShown == LOCK_SCREEN_SHOWN) {
-            return null;
-        }
-
         if (stack == null) {
             return null;
         }
@@ -1777,7 +1782,7 @@ final class TaskRecord {
         pw.print(prefix + "hasBeenVisible=" + hasBeenVisible);
                 pw.print(" mResizeMode=" + ActivityInfo.resizeModeToString(mResizeMode));
                 pw.print(" isResizeable=" + isResizeable());
-                pw.print(" firstActiveTime=" + lastActiveTime);
+                pw.print(" firstActiveTime=" + firstActiveTime);
                 pw.print(" lastActiveTime=" + lastActiveTime);
                 pw.println(" (inactive for " + (getInactiveDuration() / 1000) + "s)");
     }

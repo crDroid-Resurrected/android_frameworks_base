@@ -23,6 +23,7 @@ import android.content.IntentFilter;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.MessageQueue;
+import android.provider.Settings;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
@@ -130,6 +131,11 @@ public class SystemSensorManager extends SensorManager {
     protected boolean registerListenerImpl(SensorEventListener listener, Sensor sensor,
             int delayUs, Handler handler, int maxBatchReportLatencyUs, int reservedFlags) {
         android.util.SeempLog.record_sensor_rate(381, sensor, delayUs);
+        if (mSensorListeners.size() >= MAX_LISTENER_COUNT) {
+            throw new IllegalStateException("register failed, " +
+                "the sensor listeners size has exceeded the maximum limit " +
+                MAX_LISTENER_COUNT);
+        }
         if (listener == null || sensor == null) {
             Log.e(TAG, "sensor or listener is null");
             return false;
@@ -147,6 +153,20 @@ public class SystemSensorManager extends SensorManager {
             throw new IllegalStateException("register failed, " +
                 "the sensor listeners size has exceeded the maximum limit " +
                 MAX_LISTENER_COUNT);
+        }
+        if (Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.SENSOR_BLOCK, 0) == 1) {
+            if (sensor.getType() == Sensor.TYPE_SIGNIFICANT_MOTION) {
+                String pkgName = mContext.getPackageName();
+                for (String blockedPkgName : mContext.getResources().getStringArray(
+                        com.android.internal.R.array.config_blockPackagesSensorDrain)) {
+                    if (pkgName.equals(blockedPkgName)) {
+                        Log.w(TAG, "Preventing " + pkgName + "from draining battery using " +
+                                "significant motion sensor");
+                        return false;
+                    }
+                }
+            }
         }
 
         // Invariants to preserve:
@@ -202,6 +222,11 @@ public class SystemSensorManager extends SensorManager {
     /** @hide */
     @Override
     protected boolean requestTriggerSensorImpl(TriggerEventListener listener, Sensor sensor) {
+        if (mTriggerListeners.size() >= MAX_LISTENER_COUNT) {
+            throw new IllegalStateException("request failed, " +
+                    "the trigger listeners size has exceeded the maximum limit " +
+                    MAX_LISTENER_COUNT);
+        }
         if (sensor == null) throw new IllegalArgumentException("sensor cannot be null");
 
         if (listener == null) throw new IllegalArgumentException("listener cannot be null");

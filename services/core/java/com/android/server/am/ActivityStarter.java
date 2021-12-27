@@ -1208,7 +1208,12 @@ class ActivityStarter {
 
             sendPowerHintForLaunchStartIfNeeded(false /* forceSend */);
 
+            final ActivityRecord intentActivity = mReusedActivity;
             mReusedActivity = setTargetStackAndMoveToFrontIfNeeded(mReusedActivity);
+            if (mReusedActivity == null && ((mLaunchFlags & FLAG_ACTIVITY_CLEAR_TOP) != 0
+                    || mLaunchSingleInstance || mLaunchSingleTask)) {
+                mReusedActivity = intentActivity;
+            }
 
             if ((mStartFlags & START_FLAG_ONLY_IF_NEEDED) != 0) {
                 // We don't need to start a new activity, and the client said not to do anything
@@ -1282,6 +1287,9 @@ class ActivityStarter {
             setTaskFromReuseOrCreateNewTask(taskToAffiliate);
 
             if (mSupervisor.isLockTaskModeViolation(mStartActivity.task)) {
+                if (mReuseTask == null) {
+                    mTargetStack.removeTask(mStartActivity.task, "LockTaskModeViolation");
+                }
                 Slog.e(TAG, "Attempted Lock Task Mode violation mStartActivity=" + mStartActivity);
                 return START_RETURN_LOCK_TASK_MODE_VIOLATION;
             }
@@ -1592,6 +1600,9 @@ class ActivityStarter {
         }
         mSourceRecord = null;
         mSourceStack = null;
+        if (mStartActivity != null) {
+            mStartActivity.resultTo = null;
+        }
     }
 
     /**
@@ -2208,5 +2219,19 @@ class ActivityStarter {
                 mPendingActivityLaunches.remove(palNdx);
             }
         }
+    }
+
+    boolean clearPendingActivityLaunchesLocked(String packageName) {
+        boolean didSomething = false;
+
+        for (int palNdx = mPendingActivityLaunches.size() - 1; palNdx >= 0; --palNdx) {
+            PendingActivityLaunch pal = mPendingActivityLaunches.get(palNdx);
+            ActivityRecord r = pal.r;
+            if (r != null && r.packageName.equals(packageName)) {
+                mPendingActivityLaunches.remove(palNdx);
+                didSomething = true;
+            }
+        }
+        return didSomething;
     }
 }
