@@ -73,6 +73,7 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.text.TextUtils;
 import android.util.AtomicFile;
+import android.util.EventLog;
 import android.util.IntArray;
 import android.util.Log;
 import android.util.Slog;
@@ -186,6 +187,8 @@ public class UserManagerService extends IUserManager.Stub {
     private static final int MAX_USER_ID = Integer.MAX_VALUE / UserHandle.PER_USER_RANGE;
 
     private static final int USER_VERSION = 6;
+
+    private static final int MAX_USER_STRING_LENGTH = 500;
 
     private static final long EPOCH_PLUS_30_YEARS = 30L * 365 * 24 * 60 * 60 * 1000L; // ms
 
@@ -1920,15 +1923,17 @@ public class UserManagerService extends IUserManager.Stub {
             // Write seed data
             if (userData.persistSeedData) {
                 if (userData.seedAccountName != null) {
-                    serializer.attribute(null, ATTR_SEED_ACCOUNT_NAME, userData.seedAccountName);
+                    serializer.attribute(null, ATTR_SEED_ACCOUNT_NAME,
+                            truncateString(userData.seedAccountName));
                 }
                 if (userData.seedAccountType != null) {
-                    serializer.attribute(null, ATTR_SEED_ACCOUNT_TYPE, userData.seedAccountType);
+                    serializer.attribute(null, ATTR_SEED_ACCOUNT_TYPE,
+                            truncateString(userData.seedAccountType));
                 }
             }
             if (userInfo.name != null) {
                 serializer.startTag(null, TAG_NAME);
-                serializer.text(userInfo.name);
+                serializer.text(truncateString(userInfo.name));
                 serializer.endTag(null, TAG_NAME);
             }
             synchronized (mRestrictionsLock) {
@@ -1958,6 +1963,13 @@ public class UserManagerService extends IUserManager.Stub {
             Slog.e(LOG_TAG, "Error writing user info " + userData.info.id, ioe);
             userFile.failWrite(fos);
         }
+    }
+
+    private String truncateString(String original) {
+        if (original == null || original.length() <= MAX_USER_STRING_LENGTH) {
+            return original;
+        }
+        return original.substring(0, MAX_USER_STRING_LENGTH);
     }
 
     /*
@@ -2218,6 +2230,7 @@ public class UserManagerService extends IUserManager.Stub {
         if (ActivityManager.isLowRamDeviceStatic()) {
             return null;
         }
+        String truncatedName = truncateString(name);
         final boolean isGuest = (flags & UserInfo.FLAG_GUEST) != 0;
         final boolean isManagedProfile = (flags & UserInfo.FLAG_MANAGED_PROFILE) != 0;
         final boolean isRestricted = (flags & UserInfo.FLAG_RESTRICTED) != 0;
@@ -2296,7 +2309,7 @@ public class UserManagerService extends IUserManager.Stub {
                         flags |= UserInfo.FLAG_EPHEMERAL;
                     }
 
-                    userInfo = new UserInfo(userId, name, null, flags);
+                    userInfo = new UserInfo(userId, truncatedName, null, flags);
                     userInfo.serialNumber = mNextSerialNumber++;
                     long now = System.currentTimeMillis();
                     userInfo.creationTime = (now > EPOCH_PLUS_30_YEARS) ? now : 0;
@@ -2638,6 +2651,13 @@ public class UserManagerService extends IUserManager.Stub {
     public void setApplicationRestrictions(String packageName, Bundle restrictions,
             int userId) {
         checkSystemOrRoot("set application restrictions");
+        String validationResult = validateName(packageName);
+        if (validationResult != null) {
+            if (packageName.contains("../")) {
+                EventLog.writeEvent(0x534e4554, "239701237", -1, "");
+            }
+            throw new IllegalArgumentException("Invalid package name: " + validationResult);
+        }
         if (restrictions != null) {
             restrictions.setDefusable(true);
         }
@@ -2655,6 +2675,39 @@ public class UserManagerService extends IUserManager.Stub {
         changeIntent.setPackage(packageName);
         changeIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
         mContext.sendBroadcastAsUser(changeIntent, UserHandle.of(userId));
+    }
+
+    /**
+     * Check if the given name is valid.
+     *
+     * Note: the logic is taken from FrameworkParsingPackageUtils in master, edited to remove
+     * unnecessary parts. Copied here for a security fix.
+     *
+     * @param name The name to check.
+     * @return null if it's valid, error message if not
+     */
+    @VisibleForTesting
+    static String validateName(String name) {
+        final int n = name.length();
+        boolean front = true;
+        for (int i = 0; i < n; i++) {
+            final char c = name.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                front = false;
+                continue;
+            }
+            if (!front) {
+                if ((c >= '0' && c <= '9') || c == '_') {
+                    continue;
+                }
+                if (c == '.') {
+                    front = true;
+                    continue;
+                }
+            }
+            return "bad character '" + c + "'";
+        }
+        return null;
     }
 
     private int getUidForPackage(String packageName) {
@@ -3054,8 +3107,8 @@ public class UserManagerService extends IUserManager.Stub {
                     Slog.e(LOG_TAG, "No such user for settings seed data u=" + userId);
                     return;
                 }
-                userData.seedAccountName = accountName;
-                userData.seedAccountType = accountType;
+                userData.seedAccountName = truncateString(accountName);
+                userData.seedAccountType = truncateString(accountType);
                 userData.seedAccountOptions = accountOptions;
                 userData.persistSeedData = persist;
             }

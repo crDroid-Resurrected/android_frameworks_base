@@ -314,26 +314,28 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub {
                     }
                     UserState userState = getUserStateLocked(userId);
                     Iterator<ComponentName> it = userState.mEnabledServices.iterator();
+                    boolean anyServiceRemoved = false;
                     while (it.hasNext()) {
                         ComponentName comp = it.next();
                         String compPkg = comp.getPackageName();
                         if (compPkg.equals(packageName)) {
                             it.remove();
-                            // Update the enabled services setting.
-                            persistComponentNamesToSettingLocked(
-                                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-                                    userState.mEnabledServices, userId);
-                            // Update the touch exploration granted services setting.
                             userState.mTouchExplorationGrantedServices.remove(comp);
-                            persistComponentNamesToSettingLocked(
-                                    Settings.Secure.
-                                    TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,
-                                    userState.mTouchExplorationGrantedServices, userId);
-                            // We will update when the automation service dies.
-                            if (!userState.isUiAutomationSuppressingOtherServices()) {
-                                onUserStateChangedLocked(userState);
-                            }
-                            return;
+                            anyServiceRemoved = true;
+                        }
+                    }
+                    if (anyServiceRemoved) {
+                        // Update the enabled services setting.
+                        persistComponentNamesToSettingLocked(
+                                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                                userState.mEnabledServices, userId);
+                        // Update the touch exploration granted services setting.
+                        persistComponentNamesToSettingLocked(
+                                Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,
+                                userState.mTouchExplorationGrantedServices, userId);
+                        // We will update when the automation service dies.
+                        if (!userState.isUiAutomationSuppressingOtherServices()) {
+                            onUserStateChangedLocked(userState);
                         }
                     }
                 }
@@ -1069,6 +1071,12 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub {
             AccessibilityServiceInfo accessibilityServiceInfo;
             try {
                 accessibilityServiceInfo = new AccessibilityServiceInfo(resolveInfo, mContext);
+                if (!accessibilityServiceInfo.isWithinParcelableSize()) {
+                    Slog.e(LOG_TAG, "Skipping service "
+                            + accessibilityServiceInfo.getResolveInfo().getComponentInfo()
+                            + " because service info size is larger than safe parcelable limits.");
+                    continue;
+                }
                 mTempAccessibilityServiceInfoList.add(accessibilityServiceInfo);
             } catch (XmlPullParserException | IOException xppe) {
                 Slog.e(LOG_TAG, "Error while initializing AccessibilityServiceInfo", xppe);

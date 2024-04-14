@@ -423,7 +423,7 @@ public class DevicePolicyManager {
      *
      * @hide
      */
-    public static final long DEFAULT_STRONG_AUTH_TIMEOUT_MS = 72 * 60 * 60 * 1000; // 72h
+    public static final long DEFAULT_STRONG_AUTH_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 72h
 
     /**
      * A {@link android.os.Parcelable} extra of type {@link android.os.PersistableBundle} that
@@ -2019,7 +2019,7 @@ public class DevicePolicyManager {
      */
     public int getPasswordMaximumLength(int quality) {
         // Kind-of arbitrary.
-        return 16;
+        return 64;
     }
 
     /**
@@ -5861,6 +5861,15 @@ public class DevicePolicyManager {
      * Permissions can be granted or revoked only for applications built with a
      * {@code targetSdkVersion} of {@link android.os.Build.VERSION_CODES#M} or later.
      *
+     * Control over the following permissions are restricted for managed profile owners:
+     * <ul>
+     *  <li>Manifest.permission.READ_SMS</li>
+     * </ul>
+     * <p>
+     * A managed profile owner may not grant these permissions (i.e. call this method with any of
+     * the permissions listed above and {@code grantState} of
+     * {@code #PERMISSION_GRANT_STATE_GRANTED}), but may deny them.
+     *
      * @param admin Which profile or device owner this request is associated with.
      * @param packageName The application to grant or revoke a permission to.
      * @param permission The permission to grant or revoke.
@@ -6046,7 +6055,8 @@ public class DevicePolicyManager {
 
     /**
      * Called by a device admin to set the long support message. This will be displayed to the user
-     * in the device administators settings screen.
+     * in the device administrators settings screen. If the message is longer than 20000 characters
+     * it may be truncated.
      * <p>
      * If the long support message needs to be localized, it is the responsibility of the
      * {@link DeviceAdminReceiver} to listen to the {@link Intent#ACTION_LOCALE_CHANGED} broadcast

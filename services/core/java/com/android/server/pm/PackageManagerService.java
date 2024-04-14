@@ -10513,8 +10513,8 @@ public class PackageManagerService extends IPackageManager.Stub {
                 // Any pre-installed system app is allowed to get this permission.
                 allowed = true;
             }
-            if (!allowed && (bp.protectionLevel
-                    & PermissionInfo.PROTECTION_FLAG_DEVELOPMENT) != 0) {
+            if (!allowed && (bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_DEVELOPMENT) != 0
+                && (bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_PRE23) == 0) {
                 // For development permissions, a development permission
                 // is granted only if it was already granted.
                 allowed = origPermissions.hasInstallPermission(perm);
@@ -15999,6 +15999,16 @@ public class PackageManagerService extends IPackageManager.Stub {
                 Slog.w(TAG, "Not removing non-existent package " + packageName);
                 return PackageManager.DELETE_FAILED_INTERNAL_ERROR;
             }
+            if (isUpdatedSystemApp(uninstalledPs)
+                    && ((deleteFlags & PackageManager.DELETE_SYSTEM_APP) == 0)) {
+                UserInfo userInfo = sUserManager.getUserInfo(userId);
+                if (userInfo == null || !userInfo.isAdmin()) {
+                    Slog.w(TAG, "Not removing package " + packageName
+                            + " as only admin user may downgrade system apps");
+                    EventLog.writeEvent(0x534e4554, "170646036", -1, packageName);
+                    return PackageManager.DELETE_FAILED_USER_RESTRICTED;
+                }
+            }
             allUsers = sUserManager.getUserIds();
             info.origUsers = uninstalledPs.queryInstalledUsers(allUsers, true);
         }
@@ -18269,6 +18279,9 @@ Slog.v(TAG, ":: stepped forward, applying functor at tag " + parser.getName());
                     } else {
                         Slog.w(TAG, "Failed setComponentEnabledSetting: component class "
                                 + className + " does not exist in " + packageName);
+                        // Safetynet logging for b/240936919
+                        EventLog.writeEvent(0x534e4554, "240936919", uid);
+                        return;
                     }
                 }
                 switch (newState) {
