@@ -235,7 +235,7 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
                 fireBatteryPresentChanged();
             }
 
-            boolean unknown = !present;
+            boolean unknown = !mPresent;
             if (unknown != mStateUnknown) {
                 mStateUnknown = unknown;
                 fireBatteryUnknownStateChanged();
