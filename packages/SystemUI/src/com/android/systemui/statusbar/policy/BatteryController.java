@@ -79,11 +79,6 @@ public interface BatteryController extends DemoMode,
     }
 
     /**
-     * Returns {@code true} if there's a battery present in the device.
-     */
-    boolean isPresent();
-
-    /**
      * Returns {@code true} if the device is currently in power save mode.
      */
     boolean isPowerSave();
