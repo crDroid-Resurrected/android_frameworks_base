@@ -245,7 +245,7 @@ class ActivityStartInterceptor {
         }
         if (interceptHomeIfNeeded()) {
             // Replace primary home intents if the home intent is not in the correct format.
-            return true;Add commentMore actions
+            return true;
         }
 
         final SparseArray<ActivityInterceptorCallback> callbacks =
